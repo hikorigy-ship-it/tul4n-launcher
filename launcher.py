@@ -16,10 +16,11 @@ import packs
 import loaders
 import updater
 from hover import AnimatedButton
-from menus import StyledOptionMenu
+from menus import StyledOptionMenu, FocusedEntry
 
 ct.CTkButton = AnimatedButton
 ct.CTkOptionMenu = StyledOptionMenu
+ct.CTkEntry = FocusedEntry
 
 class MediaWorkers:
     """Bounded background work that never keeps a closed launcher alive."""
@@ -151,6 +152,7 @@ class Launcher(ct.CTk):
         w=ct.CTkLabel(p,text=text,font=('Segoe UI',size,'bold' if size>20 else 'normal'),text_color=color,wraplength=720,justify='left'); w.pack(anchor='w',pady=10); return w
     def show(self,n):
         if self.current_page==n:return
+        StyledOptionMenu.close_all()
         previous=self.current_page
         if previous:
             self.pages[previous].place_forget()

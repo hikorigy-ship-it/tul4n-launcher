@@ -1,14 +1,18 @@
 """Rounded launcher menus with mouse and keyboard navigation."""
 import tkinter as tk
 import time
+import weakref
 import customtkinter as ct
 from hover import AnimatedButton
 
 
 class StyledOptionMenu(ct.CTkOptionMenu):
+    _instances = weakref.WeakSet()
+
     def __init__(self, *args, **kwargs):
         self._popup = None
         super().__init__(*args, **kwargs)
+        self._instances.add(self)
         self.bind('<KeyPress-space>', lambda event: self._open_dropdown_menu(), add='+')
         self.bind('<KeyPress-Return>', lambda event: self._open_dropdown_menu(), add='+')
 
@@ -18,8 +22,14 @@ class StyledOptionMenu(ct.CTkOptionMenu):
             try:
                 popup.grab_release()
                 popup.destroy()
+                self.winfo_toplevel().focus_force()
             except tk.TclError:
                 pass
+
+    @classmethod
+    def close_all(cls):
+        for menu in list(cls._instances):
+            menu._close_popup()
 
     def _open_dropdown_menu(self):
         if self._popup is not None:
@@ -103,4 +113,15 @@ class StyledOptionMenu(ct.CTkOptionMenu):
     def destroy(self):
         self._close_popup()
         super().destroy()
+
+
+class FocusedEntry(ct.CTkEntry):
+    """Return native keyboard focus after closing a borderless dropdown."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._entry.bind('<Button-1>', self._focus_input, add='+')
+
+    def _focus_input(self, event):
+        StyledOptionMenu.close_all()
+        self._entry.focus_force()
 
