@@ -21,9 +21,11 @@ def api(path,params=None):
         r=s.get('https://api.modrinth.com/v2/'+path,params=params,timeout=(10,35))
         r.raise_for_status(); return r.json()
 
-def search(query,version,loader_type,project_type='mod',limit=20):
+def search(query,version,loader_type,project_type='mod',limit=20,offset=0,category=None,order=None,with_total=False):
     facets=[['project_type:'+project_type],['categories:'+loader_type],['versions:'+version]]
-    data=api('search',{'query':query,'facets':json.dumps(facets),'index':'relevance' if query else 'downloads','limit':limit})['hits']
+    if category:facets.append(['categories:'+category])
+    response=api('search',{'query':query,'facets':json.dumps(facets),'index':order or ('relevance' if query else 'downloads'),'limit':limit,'offset':offset})
+    data=response['hits'];total=response.get('total_hits',len(data))
     notice=''
     if query:
         # Prioritize names without discarding legitimate description-based searches.
@@ -41,7 +43,7 @@ def search(query,version,loader_type,project_type='mod',limit=20):
                     supported=', '.join(match.get('versions',[])[-6:])
                     notice=f'{match["title"]} недоступен для {loader_type.title()} {version}. Версии на Modrinth: {supported}. Ниже — другие совпадения по запросу.'
             except requests.RequestException:pass
-    return data,notice
+    return (data,notice,total) if with_total else (data,notice)
 
 def safe_path(root,relative):
     if '\\' in relative or ':' in relative: raise ValueError('Недопустимый путь в сборке')
@@ -67,6 +69,23 @@ def select_base(root,version,kind,loader=None):
     folder=Path(root)/'instances'/instance_id;folder.mkdir(parents=True,exist_ok=True)
     data={'id':instance_id,'name':kind.title()+' '+version+(' • '+loader if loader and kind!='vanilla' else ''),'version':version,'loader':loader,'loader_type':kind,'source':'base'}
     (folder/'.chunk.json').write_text(json.dumps(data,ensure_ascii=False),'utf-8')
+    return data
+
+def update_presentation(root,item,description,cover_path=None,remove=False):
+    from PIL import Image,ImageOps
+    folder=safe_path(Path(root)/'instances',item['id']);folder.mkdir(parents=True,exist_ok=True)
+    metadata=folder/'.chunk.json'
+    data=json.loads(metadata.read_text('utf-8')) if metadata.exists() else dict(item)
+    if len(description)>2000:raise ValueError('Описание должно быть не длиннее 2000 символов')
+    if cover_path:
+        with Image.open(cover_path) as source:
+            if source.width*source.height>40_000_000:raise ValueError('Обложка слишком большая')
+            image=ImageOps.fit(source.convert('RGB'),(640,360))
+        image.save(folder/'cover.png','PNG');data['cover']='cover.png'
+    elif remove:
+        data.pop('cover',None);data.pop('cover_url',None)
+    data['description']=description.strip()
+    temporary=metadata.with_suffix('.tmp');temporary.write_text(json.dumps(data,ensure_ascii=False,indent=2),'utf-8');temporary.replace(metadata)
     return data
 
 def list_instances(root):
@@ -168,6 +187,7 @@ def install(root,project,version,notify,loader_type='fabric'):
     try:
         loader=unpack(archive,staging,version,notify,loader_type)
         data={'id':instance_id,'name':project['title'],'version':version,'loader':loader,'loader_type':loader_type,'source':'modrinth','project_id':project['project_id'],'release_id':release['id']}
+        data.update(description=project.get('description',''),cover_url=project.get('featured_gallery') or project.get('icon_url') or '')
         (staging/'.chunk.json').write_text(json.dumps(data,ensure_ascii=False,indent=2),'utf-8')
         staging.rename(Path(root)/'instances'/instance_id)
         notify('Сборка установлена: '+project['title'],1)

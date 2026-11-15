@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$DownloadUrl)
+param([Parameter(Mandatory=$true)][string]$DownloadUrl,[switch]$Bundle)
 $ErrorActionPreference='Stop'
 Push-Location -LiteralPath $PSScriptRoot
 try {
@@ -10,7 +10,9 @@ $generated='static class ReleaseInfo { public const string DownloadUrl="'+$escap
 $config=Join-Path $PSScriptRoot 'ReleaseInfo.generated.cs'
 [IO.File]::WriteAllText($config,$generated,[Text.UTF8Encoding]::new($false))
 $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-& $compiler /nologo /target:winexe /platform:anycpu /codepage:65001 /optimize+ /win32icon:chunk.ico /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:Microsoft.CSharp.dll /out:TUL4N-Setup.exe Setup.cs ReleaseInfo.generated.cs
+$resourceArgs=@()
+if($Bundle){$resourceArgs=@('/resource:TUL4N.exe,TUL4N.Payload')}
+& $compiler /nologo /target:winexe /platform:anycpu /codepage:65001 /optimize+ /win32icon:chunk.ico /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:Microsoft.CSharp.dll /out:TUL4N-Setup.exe @resourceArgs Setup.cs ReleaseInfo.generated.cs
 if($LASTEXITCODE -ne 0){throw 'Installer compilation failed'}
 Write-Output 'TUL4N-Setup.exe is ready for the specified mirror.'
 } finally { Pop-Location }

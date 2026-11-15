@@ -8,10 +8,46 @@ using System.Security.Cryptography;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Reflection;
+using System.Collections.Generic;
 
 [assembly: AssemblyTitle("TUL4N Лаунчер — интернет-установщик")]
 [assembly: AssemblyProduct("TUL4N Лаунчер")]
 [assembly: AssemblyVersion("1.0.0.0")]
+
+static class Ui
+{
+    public static bool English=false;
+    static readonly Dictionary<string,string> Strings=new Dictionary<string,string>{
+        {"TUL4N Лаунчер — установка","TUL4N Launcher — Setup"},
+        {"Установить TUL4N Лаунчер","Install TUL4N Launcher"},
+        {"Твой следующий мир — в один клик","Your next world is one click away"},
+        {"Лаунчер включён в установщик. Аккаунты и миры сохраняются.","Launcher included. Existing accounts and worlds are preserved."},
+        {"Программа загрузится из интернета. Аккаунты и миры сохраняются.","The launcher will be downloaded. Accounts and worlds are preserved."},
+        {"Обзор…","Browse…"},{"Создать ярлык на рабочем столе","Create a desktop shortcut"},
+        {"Открыть лаунчер после установки","Launch TUL4N after installation"},
+        {"Готово к установке • Windows 10 / 11 x64","Ready to install • Windows 10 / 11 x64"},
+        {"Установить","Install"},{"Готово","Done"},{"Без установки Python","No Python installation required"},
+        {"Папка установки TUL4N Лаунчера","Choose TUL4N installation folder"},
+        {"Дождитесь окончания загрузки.","Please wait for installation to finish."},
+        {"Распаковываем лаунчер…","Extracting launcher…"},
+        {"Проверяем целостность файла…","Verifying file integrity…"},
+        {"Устанавливаем TUL4N Лаунчер…","Installing TUL4N Launcher…"},
+        {"TUL4N Лаунчер установлен!","TUL4N Launcher installed!"},
+        {"Установка не завершена. Можно повторить.","Installation failed. You can try again."},
+        {"Для Minecraft и этого лаунчера нужна 64-разрядная Windows 10 или новее.","Minecraft and this launcher require 64-bit Windows 10 or later."},
+        {"Выберите отдельную папку для лаунчера.","Choose a separate folder for the launcher."},
+        {"Не совпала контрольная сумма файла. Установка отменена. Повторите загрузку с официальной страницы TUL4N.","File checksum mismatch. Installation cancelled. Download the installer again from the official TUL4N page."},
+        {"Не удалось установить лаунчер. Проверьте интернет, доступ к папке и закройте запущенный TUL4N.","Could not install the launcher. Check the connection and folder permissions, and close running TUL4N windows."}
+    };
+    public static string T(string text)
+    {
+        if(!English)return text;
+        string value;if(Strings.TryGetValue(text,out value))return value;
+        const string prefix="Скачиваем лаунчер…";
+        if(text.StartsWith(prefix))return "Downloading launcher…"+text.Substring(prefix.Length).Replace("МБ","MB");
+        return text;
+    }
+}
 
 static class Installation
 {
@@ -41,7 +77,13 @@ static class Installation
         try
         {
             ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;
-            using(var client=new WebClient())
+            Stream embedded=Assembly.GetExecutingAssembly().GetManifestResourceStream("TUL4N.Payload");
+            if(embedded!=null)
+            {
+                progress(20,"Распаковываем лаунчер…");
+                using(embedded)using(var output=File.Create(downloaded))await embedded.CopyToAsync(output);
+            }
+            else using(var client=new WebClient())
             {
                 client.Headers[HttpRequestHeader.UserAgent]="TUL4N-Setup/1.0";
                 client.DownloadProgressChanged+=(s,e)=>progress(Math.Min(90,e.ProgressPercentage*9/10),"Скачиваем лаунчер… "+(e.BytesReceived/1048576.0).ToString("0.0")+" МБ");
@@ -79,13 +121,13 @@ class Banner:Panel
         using(var brush=new SolidBrush(Color.FromArgb(170,133,255)))e.Graphics.FillPolygon(brush,new[]{new Point(510,28),new Point(555,113),new Point(474,113)});
         using(var brush=new SolidBrush(Color.FromArgb(112,67,205)))e.Graphics.FillPolygon(brush,new[]{new Point(510,28),new Point(555,113),new Point(510,102)});
         using(var font=new Font("Segoe UI",27,FontStyle.Bold)) e.Graphics.DrawString("TUL4N",font,Brushes.White,new PointF(28,28));
-        using(var font=new Font("Segoe UI",12)) e.Graphics.DrawString("Твой следующий мир — в один клик",font,Brushes.Lavender,new PointF(30,84));
+        using(var font=new Font("Segoe UI",12)) e.Graphics.DrawString(Ui.T("Твой следующий мир — в один клик"),font,Brushes.Lavender,new PointF(30,84));
     }
 }
 
 class SetupWindow:Form
 {
-    TextBox path;Button browse,install;Label status;ProgressBar bar;CheckBox desktop,launch;
+    TextBox path;Button browse,install;Label status;ProgressBar bar;CheckBox desktop,launch;ComboBox language;
     bool running=false;string installed=null;
     public SetupWindow()
     {
@@ -95,40 +137,54 @@ class SetupWindow:Form
         Icon=Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         Controls.Add(new Banner());
         var heading=new Label{Text="Установить TUL4N Лаунчер",Location=new Point(28,172),Size=new Size(550,32),Font=new Font("Segoe UI",17,FontStyle.Bold)};Controls.Add(heading);
-        Controls.Add(new Label{Text="Программа загрузится из интернета. Аккаунты и миры сохраняются.",Location=new Point(30,213),Size=new Size(560,24),ForeColor=Color.FromArgb(163,152,179)});
+        bool bundled=Assembly.GetExecutingAssembly().GetManifestResourceInfo("TUL4N.Payload")!=null;
+        Controls.Add(new Label{Text=bundled?"Лаунчер включён в установщик. Аккаунты и миры сохраняются.":"Программа загрузится из интернета. Аккаунты и миры сохраняются.",Location=new Point(30,213),Size=new Size(560,24),ForeColor=Color.FromArgb(163,152,179)});
         path=new TextBox{Location=new Point(30,252),Size=new Size(445,28),BackColor=Color.FromArgb(39,33,48),ForeColor=ForeColor,BorderStyle=BorderStyle.FixedSingle,Text=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Programs","TUL4N")};Controls.Add(path);
-        browse=new Button{Text="Обзор…",Location=new Point(486,249),Size=new Size(104,32),FlatStyle=FlatStyle.Flat};browse.Click+=(s,e)=>{using(var dialog=new FolderBrowserDialog()){dialog.Description="Папка установки TUL4N Лаунчера";dialog.SelectedPath=path.Text;if(dialog.ShowDialog()==DialogResult.OK)path.Text=dialog.SelectedPath;}};Controls.Add(browse);
+        browse=new Button{Text="Обзор…",Location=new Point(486,249),Size=new Size(104,32),FlatStyle=FlatStyle.Flat};browse.Click+=(s,e)=>{using(var dialog=new FolderBrowserDialog()){dialog.Description=Ui.T("Папка установки TUL4N Лаунчера");dialog.SelectedPath=path.Text;if(dialog.ShowDialog()==DialogResult.OK)path.Text=dialog.SelectedPath;}};Controls.Add(browse);
         desktop=new CheckBox{Text="Создать ярлык на рабочем столе",Checked=true,Location=new Point(30,298),Size=new Size(550,25)};Controls.Add(desktop);
         launch=new CheckBox{Text="Открыть лаунчер после установки",Checked=true,Location=new Point(30,329),Size=new Size(550,25)};Controls.Add(launch);
         bar=new ProgressBar{Location=new Point(30,371),Size=new Size(560,7),Maximum=100,Style=ProgressBarStyle.Continuous};Controls.Add(bar);
         status=new Label{Text="Готово к установке • Windows 10 / 11 x64",Location=new Point(30,390),Size=new Size(560,33),ForeColor=Color.FromArgb(176,158,202)};Controls.Add(status);
         install=new Button{Text="Установить",Location=new Point(397,435),Size=new Size(193,37),BackColor=Color.FromArgb(112,72,235),ForeColor=Color.White,FlatStyle=FlatStyle.Flat};install.FlatAppearance.BorderSize=0;install.Click+=InstallClicked;Controls.Add(install);
         Controls.Add(new Label{Text="Без установки Python",Location=new Point(30,443),Size=new Size(300,25),ForeColor=Color.FromArgb(132,121,148)});
-        FormClosing+=(s,e)=>{if(running){e.Cancel=true;status.Text="Дождитесь окончания загрузки.";}};
+        language=new ComboBox{Location=new Point(420,118),Size=new Size(170,26),DropDownStyle=ComboBoxStyle.DropDownList};
+        language.Items.AddRange(new object[]{"Русский","English"});Controls.Add(language);language.BringToFront();
+        language.SelectedIndexChanged+=(s,e)=>{Ui.English=language.SelectedIndex==1;ApplyLanguage(this);Text=Ui.T("TUL4N Лаунчер — установка");Invalidate(true);};
+        language.SelectedIndex=System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName=="ru"?0:1;
+        FormClosing+=(s,e)=>{if(running){e.Cancel=true;status.Text=Ui.T("Дождитесь окончания загрузки.");}};
+    }
+    void ApplyLanguage(Control parent)
+    {
+        foreach(Control control in parent.Controls)
+        {
+            if(!(control is TextBox) && !(control is ComboBox) && !String.IsNullOrEmpty(control.Text))
+            {if(control.Tag==null)control.Tag=control.Text;control.Text=Ui.T((string)control.Tag);}
+            ApplyLanguage(control);
+        }
     }
     void Progress(int value,string text)
     {
         if(IsDisposed)return;
         if(InvokeRequired){BeginInvoke(new Action(()=>Progress(value,text)));return;}
-        bar.Value=Math.Max(0,Math.Min(100,value));status.Text=text;
+        bar.Value=Math.Max(0,Math.Min(100,value));status.Text=Ui.T(text);
     }
     async void InstallClicked(object sender,EventArgs e)
     {
         if(installed!=null){Close();return;}
-        if(!Environment.Is64BitOperatingSystem){MessageBox.Show("Для Minecraft и этого лаунчера нужна 64-разрядная Windows 10 или новее.");return;}
-        running=true;install.Enabled=browse.Enabled=path.Enabled=desktop.Enabled=launch.Enabled=false;
+        if(!Environment.Is64BitOperatingSystem){MessageBox.Show(Ui.T("Для Minecraft и этого лаунчера нужна 64-разрядная Windows 10 или новее."));return;}
+        running=true;install.Enabled=browse.Enabled=path.Enabled=desktop.Enabled=launch.Enabled=language.Enabled=false;
         try
         {
             installed=await Installation.Install(path.Text,desktop.Checked,true,Progress);
-            install.Text="Готово";
+            install.Text=Ui.T("Готово");
             if(launch.Checked)Process.Start(new ProcessStartInfo(installed){WorkingDirectory=Path.GetDirectoryName(installed),UseShellExecute=true});
         }
         catch(Exception error)
         {
-            status.Text="Установка не завершена. Можно повторить.";
-            MessageBox.Show("Не удалось установить лаунчер. Проверьте интернет, доступ к папке и закройте запущенный TUL4N.\n\n"+error.Message,"TUL4N",MessageBoxButtons.OK,MessageBoxIcon.Information);
+            status.Text=Ui.T("Установка не завершена. Можно повторить.");
+            MessageBox.Show(Ui.T("Не удалось установить лаунчер. Проверьте интернет, доступ к папке и закройте запущенный TUL4N.")+"\n\n"+Ui.T(error.Message),"TUL4N",MessageBoxButtons.OK,MessageBoxIcon.Information);
         }
-        finally{running=false;install.Enabled=true;if(installed==null)browse.Enabled=path.Enabled=desktop.Enabled=launch.Enabled=true;}
+        finally{running=false;install.Enabled=true;if(installed==null)browse.Enabled=path.Enabled=desktop.Enabled=launch.Enabled=language.Enabled=true;}
     }
 }
 
