@@ -1,0 +1,14 @@
+ReleaseInfo.generated.cs
+TUL4N-Setup.exe
+TUL4N.exe
+.build-env/
+build/
+dist/
+*.spec
+__pycache__/
+settings.json
+instances/
+cache/
+runtime-temp/
+*.log
+

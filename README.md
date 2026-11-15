@@ -1,2 +1,63 @@
-# tul4n-launcher
-TUL4N Launcher — public Windows downloads and installer mirror
+# TUL4N Лаунчер
+
+Открытый лаунчер Minecraft Java для Windows 10/11 x64.
+
+## Скачать
+
+[Скачать установщик](https://github.com/hikorigy-ship-it/tul4n-launcher/releases/latest/download/TUL4N-Setup.exe) · [Все выпуски](https://github.com/hikorigy-ship-it/tul4n-launcher/releases)
+
+Интернет-установщик скачивает лаунчер прямо с GitHub и проверяет SHA-256. Для использования готового EXE устанавливать Python не нужно.
+
+## Возможности
+
+- Minecraft 1.16.4, 1.20.1, 1.21.1, 1.21.4, 1.21.11, 26.1, 26.2 и 26.3.
+- Fabric, Forge и NeoForge — при наличии совместимого выпуска загрузчика.
+- Офлайн-профили по нику.
+- Каталог модов и сборок Modrinth без API-ключа.
+- Отдельные сборки, миры и настройки; включение и отключение модов.
+- Автоперевод публичных описаний модов с возможностью просмотра оригинала.
+
+## Запустить из исходников
+
+Нужен Python 3.12:
+
+```powershell
+py -3.12 -m venv .build-env
+.\.build-env\Scripts\python.exe -m pip install -r requirements.txt pillow
+.\.build-env\Scripts\python.exe launcher.py
+```
+
+## Собрать EXE
+
+```powershell
+.\Build-Launcher.ps1
+```
+
+Загрузите полученный `TUL4N.exe` в GitHub Release, затем соберите интернет-установщик с прямым адресом именно этого выпуска:
+
+```powershell
+.\Build-Installer.ps1 -DownloadUrl 'https://github.com/OWNER/REPO/releases/download/TAG/TUL4N.exe'
+```
+
+Полученный `TUL4N-Setup.exe` нужно добавить в тот же выпуск. Он содержит контрольную сумму соответствующего лаунчера. Для сборки установщика используется компилятор .NET Framework из Windows.
+
+## Файлы
+
+- `launcher.py` — интерфейс, аккаунты, запуск игры и каталог.
+- `loaders.py` — официальные источники версий, выбор Java и установка загрузчиков.
+- `packs.py` — поиск Modrinth и установка сборок с проверкой путей и хешей.
+- `Setup.cs` — исходный код интернет-установщика.
+- `Build-Launcher.ps1`, `Build-Installer.ps1` — сборка готовых программ.
+
+Настройки и пользовательские данные хранятся рядом с EXE. Не публикуйте `settings.json`, `instances`, миры и личные журналы.
+
+## Требования и ограничения
+
+Для игры нужна Java: 8 для 1.16.4, 17 для 1.20.1, 21 для 1.21.x, 25 для 26.x. Подходящая установленная Java выбирается автоматически; свой путь можно задать в настройках. Для загрузки игры и модов нужен интернет. Офлайн-профили не дают доступа к серверам с проверкой Microsoft.
+
+Доступность GitHub и игровых источников зависит от сети пользователя. Зеркало не использует `chatgpt.site`.
+
+## Лицензия
+
+Собственный код TUL4N распространяется под MIT; см. [LICENSE](LICENSE). Сторонние зависимости сохраняют свои лицензии: CustomTkinter, Pillow, requests, minecraft-launcher-lib и PyInstaller. Minecraft и загрузчики скачиваются из официальных источников и не включены в исходный код проекта. Проект не связан с Mojang или Microsoft.
+
