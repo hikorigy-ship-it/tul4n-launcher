@@ -6,7 +6,7 @@ from xml.etree import ElementTree
 import requests
 import minecraft_launcher_lib as mc
 
-VERSIONS=['1.16.4','1.20.1','1.21.1','1.21.4','1.21.11','26.1','26.2','26.3']
+VERSIONS=['1.16.5','1.20.1','1.21.1','1.21.4','1.21.11','26.1','26.2','26.3']
 LOADERS=['Fabric','Forge','NeoForge']
 
 def get(url):

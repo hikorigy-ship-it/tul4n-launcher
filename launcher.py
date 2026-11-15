@@ -14,6 +14,10 @@ import math,time
 from urllib.parse import urlparse
 import packs
 import loaders
+import updater
+from hover import AnimatedButton
+
+ct.CTkButton = AnimatedButton
 
 class MediaWorkers:
     """Bounded background work that never keeps a closed launcher alive."""
@@ -292,6 +296,24 @@ class Launcher(ct.CTk):
         while not self.events.empty() and time.perf_counter()<deadline:
             kind,data=self.events.get()
             if kind=='status': self.status.configure(text=data); self.modstatus.configure(text=data); self.pack_status.configure(text=data)
+            elif kind=='update_status': self.update_status.configure(text=data)
+            elif kind=='update_checked':
+                self.available_update=data
+                self.update_button.configure(state='normal',text='Обновить и перезапустить' if data else 'Проверить обновления')
+                self.update_status.configure(text=f'Доступна версия {data[0]}' if data else 'Установлена последняя версия')
+            elif kind=='update_error':
+                self.update_button.configure(state='normal',text='Повторить проверку')
+                self.available_update=None
+                self.update_status.configure(text='Ошибка обновления: '+str(data)[:180])
+            elif kind=='update_ready':
+                if self.busy or self.game_running:
+                    self.update_button.configure(state='normal',text='Обновить и перезапустить')
+                    self.update_status.configure(text='Завершите игру или установку, затем повторите обновление')
+                else:
+                    try: updater.restart(data,sys.executable)
+                    except Exception as error:
+                        self.events.put(('update_error',str(error)))
+                    else: self.close(); return
             elif kind=='mods': self.render_mods(data)
             elif kind=='search_result':
                 request,result,version,error,query,loader_type,notice=data
@@ -484,13 +506,33 @@ class Launcher(ct.CTk):
     def settings(self):
         p=self.pages['Настройки']; self.label(p,'Настрой под себя',36)
         self.label(p,'Путь к java.exe • оставьте пустым для автоматического выбора'); self.java_entry=ct.CTkEntry(p,width=650); self.java_entry.insert(0,self.cfg.get('java','')); self.java_entry.pack(anchor='w')
-        self.label(p,'1.16.4 → Java 8 • 1.20.1 → Java 17 • 1.21.x → Java 21 • 26.x → Java 25',12,'#9eafbc')
+        self.label(p,'1.16.5 → Java 8 • 1.20.1 → Java 17 • 1.21.x → Java 21 • 26.x → Java 25',12,'#9eafbc')
         self.label(p,'Память игры, ГБ'); self.ram=ct.CTkOptionMenu(p,values=['2','3','4','6','8','12','16']); self.ram.set(str(self.cfg.get('ram',4))); self.ram.pack(anchor='w')
         self.label(p,'Магазин модов • Modrinth',22)
         self.label(p,'Поиск и скачивание доступны без аккаунта и API-ключа.',14,'#9eafbc')
         self.label(p,'Описания автоматически переводятся через Google Translate.\nСервис получает только публичный текст описания мода.',12,'#9eafbc')
         ct.CTkButton(p,text='Сохранить настройки',height=44,command=self.save_settings).pack(anchor='w',pady=20)
         self.settings_status=self.label(p,'Minecraft — Mojang • Fabric — FabricMC • Моды — Modrinth',14)
+        self.available_update=None
+        self.update_button=ct.CTkButton(p,text='Проверить обновления',height=40,command=self.update_launcher)
+        self.update_button.pack(anchor='w',pady=(14,4))
+        self.update_status=self.label(p,'TUL4N '+updater.VERSION,12,'#9eafbc')
+    def update_launcher(self):
+        if not getattr(sys,'frozen',False):
+            self.update_status.configure(text='Обновления доступны в установленной .exe версии'); return
+        if self.busy or self.game_running:
+            self.update_status.configure(text='Сначала завершите игру или установку'); return
+        release=self.available_update
+        self.update_button.configure(state='disabled')
+        self.update_status.configure(text='Скачиваем обновление…' if release else 'Проверяем обновления…')
+        def job():
+            try:
+                if release:
+                    stage=updater.download(release[1],sys.executable,lambda text:self.events.put(('update_status',text)))
+                    self.events.put(('update_ready',stage))
+                else:self.events.put(('update_checked',updater.latest()))
+            except Exception as error:self.events.put(('update_error',str(error)))
+        threading.Thread(target=job,daemon=True).start()
     def save_settings(self):
         self.cfg.update(java=self.java_entry.get().strip(),ram=int(self.ram.get())); self.save(); self.settings_status.configure(text='Настройки сохранены')
     def api(self,path,params=None):
