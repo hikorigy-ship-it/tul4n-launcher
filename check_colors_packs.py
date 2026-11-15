@@ -27,6 +27,6 @@ with tempfile.TemporaryDirectory() as temp:
         restored=next(x for x in packs.list_instances(root) if x['id']==item['id'])
         assert 'cover' not in restored
         app.close()
-        colors.select(json.loads(launcher.CONFIG.read_text('utf-8'))['color']);assert colors.current=='Красный'
-print('PASS: seven palettes, contrast, new widgets, persistence, cover sizing/removal and pack metadata')
+        colors.select(json.loads(launcher.CONFIG.read_text('utf-8'))['color']);assert colors.current==name
+print('PASS: all palettes, contrast, new widgets, persistence, cover sizing/removal and pack metadata')
 

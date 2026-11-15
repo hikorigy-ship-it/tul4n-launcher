@@ -111,7 +111,12 @@ def available(kind,version):
     if versions:return versions[0]
     raise ValueError(f'Для Minecraft {version} нет поддерживаемой установки {kind.title()}. Выберите другой загрузчик или версию.')
 
-def install(kind,version,game,java,callback,pinned=None):
+def install(kind,version,game,java,callback,pinned=None,cancel_event=None):
+    def check_cancel():
+        if cancel_event is not None and cancel_event.is_set():
+            from instance_tools import Cancelled
+            raise Cancelled('Импорт отменён')
+    check_cancel()
     game=Path(game); game.mkdir(parents=True,exist_ok=True)
     if kind=='forge' and pinned and not pinned.startswith(version+'-'):pinned=version+'-'+pinned
     marker=game/'.chunk-loader-ready.json'
@@ -135,7 +140,26 @@ def install(kind,version,game,java,callback,pinned=None):
         mc.install.install_minecraft_version(installed,str(game),callback=callback)
     elif kind=='forge':
         forge_version=loader if loader.startswith(version+'-') else version+'-'+loader
-        mc.forge.install_forge_version(forge_version,str(game),callback=callback,java=java)
+        if cancel_event is None:mc.forge.install_forge_version(forge_version,str(game),callback=callback,java=java)
+        else:
+            original_process=mc.forge.subprocess
+            class CancellableProcessors:
+                def __getattr__(self,name):return getattr(original_process,name)
+                def run(self,command,**options):
+                    options.pop('check',None);options.setdefault('creationflags',0x08000000)
+                    process=original_process.Popen(command,**options)
+                    while process.poll() is None:
+                        if cancel_event.wait(.2):
+                            process.terminate()
+                            try:process.wait(timeout=5)
+                            except subprocess.TimeoutExpired:process.kill();process.wait()
+                            check_cancel()
+                    if process.returncode:raise subprocess.CalledProcessError(process.returncode,command)
+                    return subprocess.CompletedProcess(command,process.returncode)
+            try:
+                mc.forge.subprocess=CancellableProcessors()
+                mc.forge.install_forge_version(forge_version,str(game),callback=callback,java=java)
+            finally:mc.forge.subprocess=original_process
         installed=mc.forge.forge_to_installed_version(forge_version)
     elif kind=='neoforge':
         mc.install.install_minecraft_version(version,str(game),callback=callback)
@@ -153,11 +177,22 @@ def install(kind,version,game,java,callback,pinned=None):
         installed=profile['version']
         callback.get('setStatus',lambda _:None)('Устанавливаем NeoForge '+loader+'…')
         with (game/'loader-install.log').open('w',encoding='utf-8') as log:
-            code=subprocess.call([java,'-jar',str(installer),'--installClient',str(game)],cwd=game,stdout=log,stderr=subprocess.STDOUT,creationflags=0x08000000)
+            if cancel_event is None:
+                code=subprocess.call([java,'-jar',str(installer),'--installClient',str(game)],cwd=game,stdout=log,stderr=subprocess.STDOUT,creationflags=0x08000000)
+            else:
+                process=subprocess.Popen([java,'-jar',str(installer),'--installClient',str(game)],cwd=game,stdout=log,stderr=subprocess.STDOUT,creationflags=0x08000000)
+                while process.poll() is None:
+                    if cancel_event.wait(.2):
+                        process.terminate()
+                        try:process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:process.kill();process.wait()
+                        check_cancel()
+                code=process.returncode
         if code:raise ValueError('Установщик NeoForge завершился с ошибкой. Подробности в loader-install.log')
         mc.install.install_minecraft_version(installed,str(game),callback=callback)
     else:raise ValueError('Неизвестный загрузчик')
     if not (game/'versions'/installed/(installed+'.json')).exists():raise ValueError('Установщик не создал профиль загрузчика')
+    check_cancel()
     marker.write_text(json.dumps({'kind':kind,'loader':loader,'minecraft':version,'id':installed}),'utf-8')
     return installed
 

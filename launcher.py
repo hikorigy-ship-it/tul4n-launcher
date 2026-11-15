@@ -17,6 +17,9 @@ from urllib.parse import urlparse
 import packs
 import loaders
 import updater
+import instance_tools
+from resource_catalog import ResourceCatalog
+from build_code_ui import BuildCodeUI
 from hover import AnimatedButton
 from menus import StyledOptionMenu, FocusedEntry
 
@@ -100,6 +103,7 @@ ct.ThemeManager.theme['CTkEntry']['fg_color']=['#222c22','#222c22']
 ct.ThemeManager.theme['CTkEntry']['border_color']=['#313e32','#313e32']
 import colors
 colors.install()
+from appearance import AppearancePanel
 
 class Launcher(ct.CTk):
     def __init__(self):
@@ -110,7 +114,10 @@ class Launcher(ct.CTk):
         self.geometry('1180x780'); self.minsize(1060, 720)
         self.configure(fg_color='#101410')
         self.cfg = json.loads(CONFIG.read_text('utf-8')) if CONFIG.exists() else {}
+        self.root_path=ROOT
+        colors.set_profile(self.cfg.get('appearance',{}))
         colors.select(self.cfg.get('color','Зеленый'))
+        self.attributes('-alpha',colors.profile['opacity'])
         self.configure(fg_color=colors.color('#101410'))
         self.accounts = self.cfg.get('accounts', [])
         self.nick = ct.StringVar(value=self.cfg.get('nick', self.accounts[0] if self.accounts else ''))
@@ -119,6 +126,7 @@ class Launcher(ct.CTk):
         self.loader_release=ct.StringVar(value='Проверка…')
         self.loader_catalog={}; self.compat_requests={}; self.metadata_loading=True
         self.events = queue.Queue(); self.busy = False
+        self.transfer=None;self.last_operation=None
         self.game_running=False; self.searching=False; self.search_id=0
         self.current_page=None;self.closing=False;self.resizing_until=0
         self.nav_animation=None;self.nav_y=None;self.hero_resize_job=None;self.hero_size=None
@@ -128,7 +136,7 @@ class Launcher(ct.CTk):
         if not any(x['id']==self.active_id for x in self.instances):self.active_id='vanilla-'+self.version.get()
         self.instance_name=ct.StringVar(value='')
         self.media_pool=MediaWorkers(max_workers=4)
-        self.search_generation=0; self.mod_widgets={}
+        self.search_generation=0; self.mod_widgets={};self.target_menus=[]
         self.grid_columnconfigure(1, weight=1); self.grid_rowconfigure(1, weight=1)
         self.page_host=tk.Frame(self,bg=colors.color('#101410'),bd=0,highlightthickness=0)
         self.page_host.grid(row=1,column=1,sticky='nsew',padx=(24,28),pady=(4,22))
@@ -143,19 +151,20 @@ class Launcher(ct.CTk):
         ct.CTkLabel(side,text='ϟ  TUL4N',font=('Segoe UI',25,'bold'),text_color='#70e6a1').pack(pady=(19,3))
         ct.CTkLabel(side,text='MINECRAFT LAUNCHER',font=('Segoe UI',9),text_color='#637866').pack(pady=(0,34))
         self.pages={}; self.nav={}
-        for name,symbol in [('Главная','⌂'),('Моды','▦'),('Сборки','◫'),('Аккаунты','♙'),('Настройки','⚙')]:
+        for name,symbol in [('Главная','⌂'),('Моды','▦'),('Сборки','◫'),('Ресурспаки','▧'),('Шейдеры','✦'),('Аккаунты','♙'),('Настройки','⚙')]:
             b=ct.CTkButton(side,text=f'{symbol}   {name}',height=44,corner_radius=11,fg_color='transparent',text_color='#879d8b',hover_color='#212f24',anchor='w',font=('Segoe UI',14),command=lambda n=name:self.show(n)); b.pack(padx=12,pady=6,fill='x'); self.nav[name]=b
             p=ct.CTkFrame(self.page_host,width=940,height=665,fg_color='#101410',corner_radius=0);p.pack_propagate(False);self.pages[name]=p
         self.nav_indicator=tk.Frame(side,bg=colors.color('#a3ffbb'),width=3,height=22)
         profile=ct.CTkFrame(side,fg_color='#1a231b',corner_radius=13); profile.pack(side='bottom',padx=12,pady=18,fill='x')
         ct.CTkLabel(profile,text='◈  Офлайн-профиль',font=('Segoe UI',12,'bold'),text_color='#a4ffb8').pack(padx=10,pady=(12,4))
         self.sidebar_nick=ct.CTkLabel(profile,text=self.nick.get() or 'Выберите ник',font=('Segoe UI',13)); self.sidebar_nick.pack(pady=(0,12))
-        self.home(); self.mods(); self.builds(); self.profiles(); self.settings(); self.refresh_instances(); self.show('Главная')
+        self.build_code_ui=BuildCodeUI(self)
+        self.home(); self.mods(); self.builds(); self.resource_catalogs={kind:ResourceCatalog(self,kind) for kind in ('resourcepack','shader')}; self.profiles(); self.settings(); self.refresh_instances(); self.show('Главная')
         self.protocol('WM_DELETE_WINDOW',self.close)
         self.bind('<Control-f>',lambda _:self.focus_search())
         self.animation_job=self.after(60,self.animate_hero)
         self.bind('<Configure>',self.on_window_resize,add='+')
-        self.after(100,self.poll)
+        self.poll_job=self.after(100,self.poll)
         self.update_checking=False
         self.update_timer=self.after(10000,self.check_updates_automatically)
         self.after(150,self.refresh_version_catalog)
@@ -167,14 +176,18 @@ class Launcher(ct.CTk):
         StyledOptionMenu.close_all()
         previous=self.current_page
         if previous:
+            self.nav[previous]._selection_accent=False
             self.pages[previous].place_forget()
             self.nav[previous].configure(fg_color='transparent',text_color='#879d8b')
         self.current_page=n
         self.pages[n].configure(width=self.content_size[0],height=self.content_size[1]);self.pages[n].place(x=0,y=0)
+        self.nav[n]._selection_accent=True
         self.nav[n].configure(fg_color='#168653',text_color='#ffffff')
         if self.nav_animation:self.after_cancel(self.nav_animation);self.nav_animation=None
         self.after_idle(lambda:self.start_navigation_animation(n))
         if n=='Моды' and self.mod_tabs.get()=='Каталог' and not getattr(self,'catalog_loaded',False) and not self.searching:self.after(80,self.start_search)
+        for catalogue in self.resource_catalogs.values():
+            if n==catalogue.title and not catalogue.loaded and not catalogue.loading:self.after(80,catalogue.search)
         if n=='Сборки':
             self.queue_compatibility(self.build_version.get(),'build')
             self.queue_compatibility(self.pack_version.get(),'pack')
@@ -223,6 +236,12 @@ class Launcher(ct.CTk):
     def focus_search(self):
         self.show('Моды'); self.search.focus_set(); self.search.select_range(0,'end')
     def close(self):
+        if self.build_code_ui.cancel_running():
+            self.status.configure(text='Отменяем импорт перед закрытием…');self.after(200,self.close);return
+        self.build_code_ui.close()
+        if getattr(self,'poll_job',None):self.after_cancel(self.poll_job)
+        for catalogue in self.resource_catalogs.values():catalogue.close()
+        self.appearance_panel.close()
         self.closing=True
         for job in (self.nav_animation,self.hero_resize_job,self.content_resize_job,getattr(self,'animation_job',None),getattr(self,'update_timer',None),self.search_timer):
             if job:
@@ -252,6 +271,9 @@ class Launcher(ct.CTk):
         self.status=ct.CTkLabel(p,text='Готов к новому приключению',font=('Segoe UI',12),text_color='#8ba592',wraplength=800,anchor='w',justify='left'); self.status.pack(fill='x',pady=(10,14))
         self.instance_menu=ct.CTkOptionMenu(p,values=['Загрузка сборок…'],variable=self.instance_name,command=self.choose_instance,height=34); self.instance_menu.pack(fill='x',pady=(0,10))
         self.operation_progress=ct.CTkProgressBar(p,height=4,progress_color='#87ffa4'); self.operation_progress.pack(fill='x',pady=(0,8)); self.operation_progress.set(0)
+        transfers=ct.CTkFrame(p,fg_color='transparent');transfers.pack(fill='x',pady=(0,5))
+        self.cancel_download=ct.CTkButton(transfers,text='Отменить загрузку',height=26,width=160,state='disabled',command=self.cancel_transfer);self.cancel_download.pack(side='left')
+        self.retry_download=ct.CTkButton(transfers,text='Повторить',height=26,width=100,state='disabled',command=self.retry_transfer);self.retry_download.pack(side='left',padx=8)
         lower=ct.CTkFrame(p,fg_color='transparent'); lower.pack(fill='both',expand=True); lower.grid_columnconfigure((0,1),weight=1); lower.grid_rowconfigure(0,weight=1)
         left=ct.CTkFrame(lower,fg_color='#191f19',corner_radius=15); left.grid(row=0,column=0,sticky='nsew',padx=(0,8))
         right=ct.CTkFrame(lower,fg_color='#191f19',corner_radius=15); right.grid(row=0,column=1,sticky='nsew',padx=(8,0))
@@ -296,16 +318,25 @@ class Launcher(ct.CTk):
         c.create_text(w*.6,h*.91,text='THE EMERALD CAVES',fill='#90d6ab',font=('Segoe UI',10,'bold'))
         colors.recolor_canvas(c)
         self.hero_size=(w,h)
-    def work(self,fn):
-        if self.busy:
-            self.events.put(('status','Идёт установка. Дождитесь её завершения; поиск доступен.')); return
+    def work(self,fn,cancellable=False):
+        if self.busy or self.game_running:
+            self.events.put(('status','Сначала закройте игру и дождитесь завершения текущей операции.')); return
+        self.last_operation=(fn,cancellable)
+        self.transfer=instance_tools.Transfer(lambda text,value:self.events.put(('progress',(text,value))))
+        self.cancel_download.configure(state='normal' if cancellable else 'disabled');self.retry_download.configure(state='disabled')
         self.busy=True; self.play.configure(state='disabled')
         self.operation_progress.configure(mode='indeterminate'); self.operation_progress.start()
         def job():
             try: fn()
-            except Exception as e: self.events.put(('status','Ошибка: '+str(e)))
+            except Exception as e:
+                self.events.put(('status',str(e) if isinstance(e,instance_tools.Cancelled) else 'Ошибка: '+str(e)))
+                self.events.put(('operation_failed',None))
             finally: self.events.put(('done',None))
         threading.Thread(target=job,daemon=True).start()
+    def cancel_transfer(self):
+        if self.transfer:self.transfer.cancelled.set();self.events.put(('status','Отменяем загрузку…'))
+    def retry_transfer(self):
+        if self.last_operation:self.work(*self.last_operation)
     def poll(self):
         if self.closing:return
         try:self.process_events()
@@ -314,18 +345,35 @@ class Launcher(ct.CTk):
             traceback.print_exc()
             self.status.configure(text='Не удалось обновить интерфейс. Повторите поиск.')
         finally:
-            if not self.closing:self.after(45,self.poll)
+            if not self.closing:self.poll_job=self.after(45,self.poll)
     def process_events(self):
         deadline=time.perf_counter()+.008
         while not self.events.empty() and time.perf_counter()<deadline:
             kind,data=self.events.get()
-            if kind=='status': self.status.configure(text=data); self.modstatus.configure(text=data); self.pack_status.configure(text=data)
+            if kind=='status':
+                self.status.configure(text=data); self.modstatus.configure(text=data); self.pack_status.configure(text=data)
+                if getattr(self,'asset_operation',None):self.resource_catalogs[self.asset_operation].note.configure(text=data)
+                if getattr(self,'tools_note',None) and self.tools_note.winfo_exists():self.tools_note.configure(text=data)
+            elif kind=='operation_failed':self.retry_download.configure(state='normal')
+            elif kind=='instances_updated':self.refresh_instances()
+            elif kind=='code_ui':data()
+            elif kind=='mod_update_preview':self.show_mod_update_preview(*data)
+            elif kind=='close_after_launch':self.close();return
+            elif kind=='resource_result':self.resource_catalogs[data[0]].result(*data[1:])
+            elif kind=='resource_installed':
+                self.resource_catalogs[data[0]].note.configure(text=data[1]);self.events.put(('status',data[1]))
+            elif kind=='maintenance':
+                text,added=data
+                if added:self.active_id=added['id'];self.refresh_instances();self.save()
+                else:self.refresh_instances()
+                self.events.put(('status',text))
             elif kind=='official_versions':
                 versions,error=data
                 if versions:
                     VERSIONS[:]=versions
                     for menu in (self.minecraft_menu,self.build_version,self.pack_version,self.mods_version):menu.configure(values=versions)
                 if error:self.status.configure(text='Каталог Minecraft недоступен: '+error)
+                for catalogue in self.resource_catalogs.values():catalogue.version.configure(values=versions or VERSIONS)
                 self.queue_compatibility(self.version.get())
             elif kind=='compatibility': self.apply_compatibility(*data)
             elif kind=='update_status': self.update_status.configure(text=data)
@@ -372,6 +420,10 @@ class Launcher(ct.CTk):
                 self.active_id=data['id']; self.refresh_instances(); self.save()
             elif kind=='progress':
                 text,value=data; self.status.configure(text=text); self.pack_status.configure(text=text)
+                if getattr(self,'asset_operation',None):
+                    catalogue=self.resource_catalogs[self.asset_operation];catalogue.note.configure(text=text);catalogue.progress.stop();catalogue.progress.configure(mode='determinate');catalogue.progress.set(value)
+                self.modstatus.configure(text=text)
+                if getattr(self,'tools_note',None) and self.tools_note.winfo_exists():self.tools_note.configure(text=text)
                 self.operation_progress.stop(); self.operation_progress.configure(mode='determinate'); self.operation_progress.set(value)
             elif kind=='card_media':
                 generation,mid,picture,description,translated=data
@@ -379,12 +431,13 @@ class Launcher(ct.CTk):
                     icon,summary,note=self.mod_widgets[mid]
                     if picture:
                         asset=ct.CTkImage(light_image=picture,dark_image=picture,size=(56,56)); icon.configure(image=asset,text=''); icon.image=asset
-                    summary.configure(text=description[:240]+('…' if len(description)>240 else ''))
+                    limit=110 if colors.profile['density']=='Компактные' else 240
+                    summary.configure(text=description[:limit]+('…' if len(description)>limit else ''))
                     note.configure(text=getattr(note,'stats','')+('  •  RU' if translated else ''))
             elif kind=='pack_cover':
                 widget,picture=data
                 if widget.winfo_exists():
-                    asset=ct.CTkImage(light_image=picture,dark_image=picture,size=(128,72))
+                    asset=ct.CTkImage(light_image=picture,dark_image=picture,size=getattr(widget,'_cover_size',(128,72)))
                     widget.configure(image=asset,text='');widget.image=asset
             elif kind=='details':
                 window,textbox,note,original,translated,error=data
@@ -395,6 +448,9 @@ class Launcher(ct.CTk):
             elif kind=='game_closed': self.game_running=False; self.play.configure(state='normal',text='▷  Играть'); self.status.configure(text=data)
             elif kind=='done':
                 self.busy=False; self.play.configure(state='disabled' if self.game_running else 'normal',text='Игра запущена' if self.game_running else '▷  Играть')
+                self.cancel_download.configure(state='disabled')
+                if getattr(self,'asset_operation',None):
+                    catalogue=self.resource_catalogs[self.asset_operation];catalogue.cancel.configure(state='disabled');catalogue.progress.stop();catalogue.progress.set(0);self.asset_operation=None
                 self.operation_progress.stop(); self.operation_progress.configure(mode='determinate'); self.operation_progress.set(0)
     def begin_launch(self):
         if self.metadata_loading:
@@ -407,34 +463,53 @@ class Launcher(ct.CTk):
         if nick not in self.accounts: raise ValueError('Создайте и выберите аккаунт во вкладке «Аккаунты».')
         game=ROOT/'instances'/instance['id']; game.mkdir(parents=True,exist_ok=True)
         kind=instance.get('loader_type','fabric')
+        for name,expected in {'tul4n-friends-fabric.jar': '7881d07e721c94f4b5341d9b13a6339077215f8023f477211cfb5b2e1b3824e0', 'tul4n-friends-forge.jar': '66966d3d26c36272c32365be69c367b35aab31d5394a9bb6d4d4d5f16d91675c', 'tul4n-friends-neoforge.jar': '3c9c8ed5ba10124bb0558ad87e5f475c3f22419b436e4ca89dc6a673b291ab9f'}.items():
+            old_mod=game/'mods'/name
+            if old_mod.is_file() and hashlib.sha256(old_mod.read_bytes()).hexdigest()==expected:old_mod.unlink()
         callback={'setStatus':lambda s:self.events.put(('status',s))}
-        java=loaders.java_for(version,self.cfg.get('java','').strip(),runtime_root=ROOT,callback=callback,game=game)
+        java=loaders.java_for(version,instance.get('java',self.cfg.get('java','')).strip(),runtime_root=ROOT,callback=callback,game=game)
         self.events.put(('status','Проверяем и устанавливаем Minecraft + '+kind.title()+'…'))
         installed=loaders.install(kind,version,game,java,callback,instance.get('loader'))
+        ready=game/'.chunk-loader-ready.json'
+        if ready.exists():
+            actual=json.loads(ready.read_text('utf-8'));instance['loader']=actual['loader']
+            metadata=game/'.chunk.json';saved=json.loads(metadata.read_text('utf-8')) if metadata.exists() else dict(instance)
+            saved['loader']=actual['loader'];instance_tools.write_json(metadata,saved)
+            self.events.put(('instances_updated',None))
         digest=bytearray(hashlib.md5(('OfflinePlayer:'+nick).encode()).digest()); digest[6]=(digest[6]&15)|48; digest[8]=(digest[8]&63)|128
-        options={'username':nick,'uuid':str(uuid.UUID(bytes=bytes(digest))),'token':'0','executablePath':java,'jvmArguments':[f'-Xmx{self.cfg.get("ram",4)}G'],'gameDirectory':str(game),'launcherName':'TUL4N'}
+        options={'username':nick,'uuid':str(uuid.UUID(bytes=bytes(digest))),'token':'0','executablePath':java,'jvmArguments':[f'-Xmx{instance.get("ram",self.cfg.get("ram",4))}G']+instance_tools.java_arguments(instance.get('jvm_args','')),'gameDirectory':str(game),'launcherName':'TUL4N','customResolution':True,'resolutionWidth':str(instance.get('width',1280)),'resolutionHeight':str(instance.get('height',720))}
         cmd=mc.command.get_minecraft_command(installed,str(game),options)
+        if instance.get('fullscreen') and '--fullscreen' not in cmd:cmd.append('--fullscreen')
         self.events.put(('status','Minecraft запущен. Журнал: instances/'+instance['id']+'/game.log'))
         log=(game/'game.log').open('w',encoding='utf-8')
         try:process=subprocess.Popen(cmd,cwd=game,stdout=log,stderr=subprocess.STDOUT,creationflags=0x08000000)
         except Exception:log.close(); raise
         self.game_running=True
+        if instance.get('close_launcher'):self.events.put(('close_after_launch',None))
         def monitor():
             code=process.wait(); log.close()
-            self.events.put(('game_closed','Игра закрыта.' if code==0 else f'Игра завершилась с кодом {code}. Проверьте game.log.'))
+            self.events.put(('game_closed',instance_tools.explain_crash(game,code)))
         threading.Thread(target=monitor,daemon=True).start()
     def active_instance(self):
         return next((x for x in self.instances if x['id']==self.active_id),self.instances[0])
     def instance_label(self,item):
         if item['source']=='base':return item['name']
         return item['name']+' • '+item.get('loader_type','fabric').title()+' '+item['version']+' ['+item['id'][-6:]+']'
+    def target_selector(self,parent):
+        row=ct.CTkFrame(parent,fg_color='transparent');row.pack(fill='x',pady=(7,3))
+        ct.CTkLabel(row,text='Установить в сборку:',width=150,anchor='w').pack(side='left')
+        menu=ct.CTkOptionMenu(row,values=[self.instance_label(i) for i in self.instances],variable=self.instance_name,command=self.choose_instance,width=360,height=32)
+        menu.pack(side='left',fill='x',expand=True);self.target_menus.append(menu);return menu
     def refresh_instances(self):
         self.instances=packs.list_instances(ROOT)
         selected=self.active_instance(); self.version.set(selected['version']); self.loader_type.set(next(x for x in loaders.LOADERS if x.lower()==selected.get('loader_type','fabric')))
         releases=self.loader_catalog.get(selected['version'],{}).get(selected.get('loader_type','fabric'),[])
         self.loader_release.set(selected.get('loader') or (releases[0] if releases else 'Проверка…'))
-        self.instance_menu.configure(values=[self.instance_label(x) for x in self.instances]); self.instance_name.set(self.instance_label(selected))
+        labels=[self.instance_label(x) for x in self.instances]
+        self.instance_menu.configure(values=labels); self.instance_name.set(self.instance_label(selected))
+        for menu in self.target_menus:menu.configure(values=labels)
         if hasattr(self,'library'):self.render_library()
+        for catalogue in getattr(self,'resource_catalogs',{}).values():catalogue.sync_target()
         if hasattr(self,'mod_target'):self.mod_target.configure(text='→ instances/'+selected['id']+'/mods')
         if hasattr(self,'mod_tabs') and self.mod_tabs.get()=='Установленные':self.show_installed_mods()
     def choose_instance(self,label):
@@ -510,13 +585,14 @@ class Launcher(ct.CTk):
     def builds(self):
         p=self.pages['Сборки']; self.catalog_header(p,'СБОРКИ','Каталог Modrinth: установка готовых сборок или создание своей')
         tabs=self.build_tabs=ct.CTkTabview(p,fg_color='#111515',corner_radius=0,segmented_button_selected_color='#168653'); tabs.pack(fill='both',expand=True)
-        catalog=tabs.add('Каталог');own=tabs.add('Мои сборки')
+        catalog=tabs.add('Каталог');own=tabs.add('Мои сборки');code_tab=tabs.add('Импорт по коду');self.build_code_ui.section(code_tab)
         form=ct.CTkFrame(own,fg_color='transparent'); form.pack(fill='x',pady=8)
         self.build_name=ct.CTkEntry(form,placeholder_text='Название новой сборки',width=220,height=38); self.build_name.pack(side='left',padx=(4,10))
         self.build_version=ct.CTkOptionMenu(form,values=VERSIONS,width=100,height=38,command=lambda v:self.queue_compatibility(v,'build')); self.build_version.set(self.version.get()); self.build_version.pack(side='left',padx=(0,10))
         self.build_loader=ct.CTkOptionMenu(form,values=['Vanilla'],width=100,height=38,command=self.choose_build_loader); self.build_loader.pack(side='left',padx=(0,10))
         self.build_loader_release=ct.CTkOptionMenu(form,values=['Проверка…'],width=110,height=38,state='disabled');self.build_loader_release.pack(side='left',padx=(0,10))
         ct.CTkButton(form,text='＋ Создать',width=100,height=38,command=self.create_build).pack(side='left')
+        ct.CTkButton(own,text='Импортировать сборку из файла',height=30,command=self.import_build).pack(anchor='w',padx=4)
         self.library=ct.CTkScrollableFrame(own,fg_color='transparent'); self.library.pack(fill='both',expand=True,pady=8)
         tools=ct.CTkFrame(catalog,fg_color='#181c1d',corner_radius=0,border_width=1,border_color='#3b4242'); tools.pack(fill='x',pady=(0,8))
         ct.CTkLabel(tools,text='Minecraft:').pack(side='left',padx=10,pady=6)
@@ -549,21 +625,171 @@ class Launcher(ct.CTk):
             if item['source']=='base' and item['id']!=self.active_id and not (ROOT/'instances'/item['id']).exists():continue
             card=ct.CTkFrame(self.library,fg_color='#202425',corner_radius=0,border_width=1,border_color='#3b4242'); card.pack(fill='x',pady=4)
             count=len(list((ROOT/'instances'/item['id']/'mods').glob('*.jar')))
+            compact=colors.profile['density']=='Компактные'
             title=('●  ' if item['id']==self.active_id else '◫  ')+item['name']
-            body=ct.CTkFrame(card,fg_color='transparent');body.pack(fill='x',padx=15,pady=(12,0))
+            body=ct.CTkFrame(card,fg_color='transparent');body.pack(fill='x',padx=15,pady=(5 if compact else 12,0))
             self.pack_cover(body,item)
             actions=ct.CTkFrame(body,fg_color='transparent');actions.pack(side='right',padx=(10,0),pady=(0,8))
             ct.CTkButton(actions,text='Выбрать',width=120,height=26,corner_radius=0,command=lambda x=item:self.activate_instance(x)).pack()
             ct.CTkButton(actions,text='Оформление',width=120,height=26,corner_radius=0,fg_color='#344f40',command=lambda x=item:self.edit_pack(x)).pack()
+            ct.CTkButton(actions,text='Экспортировать',width=120,height=26,corner_radius=0,fg_color='#344f40',command=lambda x=item:self.build_code_ui.export(x)).pack()
+            ct.CTkButton(actions,text='Управление',width=120,height=26,corner_radius=0,fg_color='#344f40',command=lambda x=item:self.pack_tools(x)).pack()
             tools=ct.CTkFrame(actions,fg_color='transparent');tools.pack()
             ct.CTkButton(tools,text='Папка',width=57,height=26,corner_radius=0,fg_color='#344f40',command=lambda x=item:self.open_instance_folder(x)).pack(side='left',padx=(0,6))
             ct.CTkButton(tools,text='Моды',width=57,height=26,corner_radius=0,fg_color='#344f40',command=lambda x=item:self.manage_mods(x)).pack(side='left')
             details=ct.CTkFrame(body,fg_color='transparent');details.pack(side='left',fill='both',expand=True)
             ct.CTkLabel(details,text=title,font=('Segoe UI',14,'bold'),wraplength=480,anchor='w',justify='left').pack(anchor='w')
-            ct.CTkLabel(details,text=(item.get('description') or 'Описание ещё не добавлено')[:240],wraplength=480,justify='left',text_color='#c2ceca',font=('Segoe UI',12)).pack(anchor='w')
+            ct.CTkLabel(details,text=(item.get('description') or 'Описание ещё не добавлено')[:110 if compact else 240],wraplength=480,justify='left',text_color='#c2ceca',font=('Segoe UI',12)).pack(anchor='w')
             ct.CTkLabel(details,text=f'{item.get("loader_type","fabric").title()} {item["version"]}  •  модов: {count}  •  '+('Modrinth' if item['source']=='modrinth' else 'Локальная'),text_color='#929d97',font=('Segoe UI',10)).pack(anchor='w')
+    def finish_maintenance(self,text,added=None):
+        self.events.put(('maintenance',(text,added)))
+    def favorite_button(self,parent,project,kind):
+        import weakref
+        if not hasattr(self,'favorite_buttons'):self.favorite_buttons=weakref.WeakKeyDictionary()
+        def selected():return project['project_id'] in self.cfg.get('favorites',{}).get(kind,{})
+        button=ct.CTkButton(parent,text='★ Избранное' if selected() else '☆ Сохранить',width=100,height=26,fg_color='#344f40')
+        self.favorite_buttons[button]=(kind,project['project_id'])
+        def toggle():
+            self.toggle_favorite(project,kind);button.configure(text='★ Избранное' if selected() else '☆ Сохранить')
+        button.configure(command=toggle);button.pack();return button
+    def toggle_favorite(self,project,kind):
+        saved=self.cfg.setdefault('favorites',{}).setdefault(kind,{})
+        key=project['project_id']
+        if key in saved:saved.pop(key)
+        else:
+            saved[key]={k:project[k] for k in ('project_id','title','description','author','downloads','follows','icon_url','featured_gallery','categories') if k in project}
+            saved[key].setdefault('description','');saved[key]['project_type']=kind
+        self.save()
+        for button,entry in list(getattr(self,'favorite_buttons',{}).items()):
+            if entry==(kind,key) and button.winfo_exists():button.configure(text='★ Избранное' if key in saved else '☆ Сохранить')
+    def show_favorites(self,kind):
+        window=ct.CTkToplevel(self);window.title('Избранное • Modrinth');window.geometry('770x600');window.transient(self)
+        self.label(window,'Избранное',26)
+        self.label(window,'Установка в выбранную сборку: '+self.active_instance()['name'],12)
+        panel=ct.CTkScrollableFrame(window);panel.pack(fill='both',expand=True,padx=14,pady=10)
+        def render():
+            for widget in panel.winfo_children():widget.destroy()
+            records=list(self.cfg.get('favorites',{}).get(kind,{}).values())
+            if not records:ct.CTkLabel(panel,text='Здесь пока пусто. Нажмите «☆ Сохранить» в каталоге.').pack(pady=20)
+            for project in records:
+                card=ct.CTkFrame(panel,fg_color='#202425');card.pack(fill='x',pady=4)
+                ct.CTkLabel(card,text=project['title'],font=('Segoe UI',15,'bold'),wraplength=640).pack(anchor='w',padx=10,pady=6)
+                row=ct.CTkFrame(card,fg_color='transparent');row.pack(fill='x',padx=10,pady=5)
+                def details(project=project):
+                    record=dict(project)
+                    if kind in self.resource_catalogs:record['_catalog_type']=kind
+                    self.open_details(record,self.active_instance()['version'],self.active_instance().get('loader_type','fabric'))
+                def install(project=project):
+                    item=dict(self.active_instance());version=item['version'];loader=item.get('loader_type','fabric')
+                    if kind=='mod':self.start_mod_download(project['project_id'],version,loader)
+                    elif kind=='modpack':
+                        if loader=='vanilla':self.events.put(('status','Для модовой сборки выберите Fabric, Forge или NeoForge.'));return
+                        self.work(lambda:self.install_pack(project,version,loader),True)
+                    else:self.resource_catalogs[kind].start_install(project,version)
+                def remove(project=project):self.toggle_favorite(project,kind);render()
+                ct.CTkButton(row,text='Установить',width=125,command=install).pack(side='left',padx=(0,8))
+                ct.CTkButton(row,text='Подробнее',width=125,fg_color='#344f40',command=details).pack(side='left',padx=(0,8))
+                ct.CTkButton(row,text='Убрать из избранного',width=180,fg_color='#344f40',command=remove).pack(side='left')
+        render()
+    def install_iris(self):
+        item=dict(self.active_instance());catalogue=self.resource_catalogs['shader'];loader=item.get('loader_type','fabric')
+        if loader not in ('fabric','neoforge'):catalogue.note.configure(text='Официальный Iris предназначен для Fabric и NeoForge. Выберите совместимую сборку.');return
+        if self.busy or self.game_running:catalogue.note.configure(text='Сначала закройте игру и дождитесь текущей операции.');return
+        self.asset_operation='shader';catalogue.cancel.configure(state='normal')
+        def job():
+            from resource_catalog import shader_engines
+            folder=ROOT/'instances'/item['id']
+            if 'optifine' in shader_engines(folder):raise ValueError('В сборке обнаружен OptiFine. Уберите его перед установкой Iris.')
+            project=packs.api('project/iris')
+            versions=packs.api('project/'+project['id']+'/version',{'game_versions':json.dumps([item['version']]),'loaders':json.dumps([loader])})
+            if not any(item['version'] in v.get('game_versions',[]) and loader in v.get('loaders',[]) for v in versions):raise ValueError('На Modrinth нет совместимого Iris для '+loader.title()+' '+item['version'])
+            text=instance_tools.apply_mods(folder,item,[(project['id'],None)],self.transfer)
+            self.finish_maintenance('Iris: '+text)
+        self.work(job,True)
+    def preview_mod_updates(self,item):
+        if self.busy or self.game_running:self.events.put(('status','Сначала закройте игру и дождитесь текущей операции.'));return
+        item=dict(item)
+        def job():
+            plan=instance_tools.mod_update_plan(ROOT/'instances'/item['id'],item,self.transfer)
+            self.events.put(('mod_update_preview',(item,plan)))
+        self.work(job,True)
+    def show_mod_update_preview(self,item,plan):
+        if not plan['changes']:self.events.put(('status','Совместимые обновления модов не найдены.'));return
+        window=ct.CTkToplevel(self);window.title('Изменения модов • '+item['name']);window.geometry('820x650');window.transient(self)
+        self.label(window,'Перед обновлением • '+item['name'],24)
+        textbox=ct.CTkTextbox(window,wrap='word');textbox.pack(fill='both',expand=True,padx=14,pady=8)
+        for change in plan['changes']:
+            before=change['before'];after=change['after']
+            title=after.get('name') or change['project'];old=before.get('version_number',before['id']) if before else 'не установлен'
+            textbox.insert('end',title+'\n'+old+' → '+after.get('version_number',after['id'])+'\n'+readable_description(after.get('changelog') or 'Автор не указал список изменений.')[:8000]+'\n\n')
+        if plan['unknown']:textbox.insert('end','Неопознанные моды останутся без изменений: '+str(len(plan['unknown'])))
+        textbox.configure(state='disabled')
+        def install():
+            if self.busy or self.game_running:self.events.put(('status','Сначала завершите текущую операцию.'));return
+            window.destroy()
+            self.work(lambda:self.finish_maintenance(instance_tools.apply_mods(ROOT/'instances'/item['id'],item,plan['roots'],self.transfer)),True)
+        ct.CTkButton(window,text='Установить показанные версии',width=280,command=install).pack(pady=10)
+    def import_build(self):
+        if self.busy or self.game_running:
+            self.pack_status.configure(text='Сначала закройте игру и дождитесь завершения операции.');return
+        path=filedialog.askopenfilename(parent=self,title='Импорт сборки TUL4N',filetypes=[('Сборка TUL4N','*.tul4n.zip')])
+        if path:
+            def job():
+                item=instance_tools.import_pack(ROOT,path,self.transfer)
+                self.finish_maintenance('Импортирована сборка: '+item['name'],item)
+            self.work(job,True)
+    def pack_tools(self,item):
+        item=dict(item);folder=packs.safe_path(ROOT/'instances',item['id'])
+        window=ct.CTkToplevel(self);window.title('Управление • '+item['name']);window.geometry('700x720');window.transient(self)
+        panel=ct.CTkScrollableFrame(window,fg_color='#191f19');panel.pack(fill='both',expand=True,padx=12,pady=12)
+        self.label(panel,item['name'],22)
+        self.label(panel,'Настройки применяются только к этой сборке',13)
+        entries={}
+        for key,title,value in [('ram','Память, ГБ',item.get('ram',self.cfg.get('ram',4))),('java','Путь Java • пусто = автоматически',item.get('java',self.cfg.get('java',''))),('width','Ширина окна',item.get('width',1280)),('height','Высота окна',item.get('height',720))]:
+            row=ct.CTkFrame(panel,fg_color='transparent');row.pack(fill='x',pady=3)
+            ct.CTkLabel(row,text=title,width=270,anchor='w').pack(side='left')
+            entry=ct.CTkEntry(row);entry.insert(0,str(value));entry.pack(side='left',fill='x',expand=True);entries[key]=entry
+        self.label(panel,'Дополнительные параметры Java • значения через «=»',12)
+        jvm=ct.CTkEntry(panel);jvm.insert(0,item.get('jvm_args',''));jvm.pack(fill='x',pady=4)
+        fullscreen=ct.BooleanVar(value=item.get('fullscreen',False));close_after=ct.BooleanVar(value=item.get('close_launcher',False))
+        ct.CTkSwitch(panel,text='Полный экран',variable=fullscreen).pack(anchor='w',pady=6)
+        ct.CTkSwitch(panel,text='Закрывать лаунчер после успешного запуска игры',variable=close_after).pack(anchor='w',pady=6)
+        automatic=ct.BooleanVar(value=item.get('backup_worlds',True))
+        ct.CTkSwitch(panel,text='Копировать миры перед изменением модов',variable=automatic).pack(anchor='w',pady=12)
+        self.tools_note=ct.CTkLabel(panel,text='Моды проверяются по версии Minecraft и загрузчику.\nНеизвестные файлы сохраняются; их совместимость определить нельзя.',wraplength=600,justify='left');self.tools_note.pack(fill='x',pady=8)
+        def save():
+            if self.busy or self.game_running:self.events.put(('status','Сначала закройте игру и дождитесь завершения операции.'));return
+            try:
+                folder.mkdir(parents=True,exist_ok=True)
+                if not (folder/'.chunk.json').exists():instance_tools.write_json(folder/'.chunk.json',item)
+                updated=instance_tools.save_options(folder,entries['ram'].get(),entries['java'].get().strip(),entries['width'].get(),entries['height'].get(),automatic.get(),jvm.get().strip(),fullscreen.get(),close_after.get())
+                item.update(updated);self.refresh_instances();self.tools_note.configure(text='Настройки сборки сохранены.')
+            except Exception as error:self.tools_note.configure(text=str(error))
+        ct.CTkButton(panel,text='Сохранить параметры',command=save).pack(anchor='w',pady=6)
+        row=ct.CTkFrame(panel,fg_color='transparent');row.pack(fill='x',pady=6)
+        def run(operation):self.work(lambda:self.finish_maintenance(operation()),True)
+        def check():
+            installed,unknown=instance_tools.inventory(folder,self.transfer)
+            # Pin installed releases, so checking never silently upgrades mods.
+            plan=instance_tools.resolve(item,[(p,v['release']['id']) for p,v in installed.items() if not v['filename'].endswith('.disabled')],installed,self.transfer)
+            missing=[p for p,r in plan.items() if p not in installed or installed[p]['filename'].endswith('.disabled') or installed[p]['release']['id']!=r['id']]
+            if missing:raise ValueError('Не установлены или отключены обязательные зависимости: '+', '.join(missing)+'. Нажмите «Обновить моды» для их установки.')
+            return f'Проверено модов: {len(installed)}. Известных конфликтов нет. Не распознано: {len(unknown)}. Неизвестные моды требуют ручной проверки.'
+        ct.CTkButton(row,text='Проверить моды',width=185,command=lambda:run(check)).pack(side='left',padx=3)
+        ct.CTkButton(row,text='Обновить моды',width=185,command=lambda:self.preview_mod_updates(item)).pack(side='left',padx=3)
+        row2=ct.CTkFrame(panel,fg_color='transparent');row2.pack(fill='x',pady=6)
+        ct.CTkButton(row2,text='Откатить моды',width=185,command=lambda:run(lambda:instance_tools.rollback(folder))).pack(side='left',padx=3)
+        ct.CTkButton(row2,text='Копия миров',width=185,command=lambda:run(lambda:'Копия миров: '+str(instance_tools.backup_worlds(folder,self.transfer) or 'сохранённых миров пока нет'))).pack(side='left',padx=3)
+        def export():
+            path=filedialog.asksaveasfilename(parent=window,title='Экспорт сборки',defaultextension='.tul4n.zip',initialfile=re.sub(r'[^\w .-]','_',item['name'])+'.tul4n.zip',filetypes=[('Сборка TUL4N','*.tul4n.zip')])
+            if path:run(lambda:instance_tools.export_pack(folder,item,path,self.transfer))
+        ct.CTkButton(panel,text='Экспортировать сборку',command=export).pack(anchor='w',pady=6)
+        ct.CTkButton(panel,text='Отменить текущую загрузку',command=self.cancel_transfer).pack(anchor='w',pady=6)
+        ct.CTkButton(panel,text='Открыть папку и журналы',command=lambda:self.open_instance_folder(item)).pack(anchor='w',pady=6)
     def pack_cover(self,parent,item):
-        widget=ct.CTkLabel(parent,text='◫',width=128,height=72,fg_color='#191f19',corner_radius=8,font=('Segoe UI',30))
+        size=(96,54) if colors.profile['density']=='Компактные' else (128,72)
+        widget=ct.CTkLabel(parent,text='◫',width=size[0],height=size[1],fg_color='#191f19',corner_radius=8,font=('Segoe UI',30))
+        widget._cover_size=size
         widget.pack(side='left',padx=(0,14))
         self.media_pool.submit(self.load_pack_cover,widget,dict(item))
     def load_pack_cover(self,widget,item):
@@ -659,6 +885,7 @@ class Launcher(ct.CTk):
             actions=ct.CTkFrame(body,fg_color='transparent');actions.pack(side='right',padx=(10,0))
             ct.CTkButton(actions,text='Скачать',width=100,height=28,corner_radius=0,command=lambda x=item,v=version,k=loader_type:self.start_pack_install(x,v,k)).pack()
             ct.CTkButton(actions,text='Страница',width=100,height=28,corner_radius=0,fg_color='#344f40',command=lambda x=item,v=version,k=loader_type:self.open_details(x,v,k)).pack()
+            self.favorite_button(actions,item,'modpack')
             details=ct.CTkFrame(body,fg_color='transparent');details.pack(side='left',fill='both',expand=True)
             ct.CTkLabel(details,text=item['title'],font=('Segoe UI',14,'bold'),wraplength=480,justify='left').pack(anchor='w')
             ct.CTkLabel(details,text=item['description'][:240],wraplength=480,justify='left',font=('Segoe UI',12),text_color='#c2ceca').pack(anchor='w')
@@ -666,9 +893,9 @@ class Launcher(ct.CTk):
     def start_pack_install(self,project,version,kind):
         if self.pack_version.get()!=version or self.pack_loader.get().lower()!=kind:
             self.pack_status.configure(text='Версия или загрузчик изменились. Повторите поиск.');return
-        self.work(lambda:self.install_pack(project,version,kind))
+        self.work(lambda:self.install_pack(project,version,kind),True)
     def install_pack(self,project,version,loader_type='fabric'):
-        item=packs.install(ROOT,project,version,lambda text,value:self.events.put(('progress',(text,value))),loader_type)
+        item=packs.install(ROOT,project,version,lambda text,value:self.events.put(('progress',(text,value))),loader_type,self.transfer)
         self.events.put(('instance_added',item))
     def start_mod_download(self,mid,version,loader_type='fabric'):
         if loader_type=='vanilla':
@@ -677,7 +904,7 @@ class Launcher(ct.CTk):
         if instance['version']!=version or instance.get('loader_type','fabric')!=loader_type:
             self.modstatus.configure(text='Версия или загрузчик сборки изменились. Повторите поиск.'); return
         folder=ROOT/'instances'/instance['id']/'mods'
-        self.work(lambda:self.download_mod(mid,version,set(),target_folder=folder,loader_type=loader_type))
+        self.work(lambda:self.finish_maintenance(instance_tools.apply_mods(folder.parent,instance,[(mid,None)],self.transfer)),True)
     def profiles(self):
         p=self.pages['Аккаунты']; self.label(p,'Твоя личность',36); self.label(p,'Офлайн-аккаунт содержит только ник. Он подходит для одиночной игры\nи серверов, разрешающих офлайн-подключения.',16,'#afbc9e')
         self.name_entry=ct.CTkEntry(p,placeholder_text='Ник игрока',width=340,height=45); self.name_entry.pack(anchor='w',pady=15)
@@ -697,9 +924,7 @@ class Launcher(ct.CTk):
     def settings(self):
         p=ct.CTkScrollableFrame(self.pages['Настройки'],fg_color='transparent');p.pack(fill='both',expand=True)
         self.label(p,'Настрой под себя',36)
-        row=ct.CTkFrame(p,fg_color='transparent');row.pack(anchor='w')
-        ct.CTkLabel(row,text='Цвет лаунчера').pack(side='left',padx=(0,12))
-        self.color_menu=ct.CTkOptionMenu(row,values=list(colors.PALETTES),command=self.change_color,width=180);self.color_menu.set(colors.current);self.color_menu.pack(side='left')
+        self.appearance_panel=AppearancePanel(self,p)
         self.label(p,'Путь к java.exe • оставьте пустым для автоматического выбора'); self.java_entry=ct.CTkEntry(p,width=650); self.java_entry.insert(0,self.cfg.get('java','')); self.java_entry.pack(anchor='w')
         self.label(p,'1.16.5 → Java 8 • 1.20.1 → Java 17 • 1.21.x → Java 21 • 26.x → Java 25',12,'#afbc9e')
         self.label(p,'Память игры, ГБ'); self.ram=ct.CTkOptionMenu(p,values=['2','3','4','6','8','12','16']); self.ram.set(str(self.cfg.get('ram',4))); self.ram.pack(anchor='w')
@@ -739,19 +964,27 @@ class Launcher(ct.CTk):
     def save_settings(self):
         self.cfg.update(java=self.java_entry.get().strip(),ram=int(self.ram.get())); self.save(); self.settings_status.configure(text='Настройки сохранены')
     def change_color(self,name):
-        StyledOptionMenu.close_all()
-        colors.select(name);self.cfg['color']=name;self.save()
-        self.configure(fg_color=colors.color('#101410'))
-        self.page_host.configure(bg=colors.color('#101410'))
-        self.transition_line.configure(bg=colors.color('#101410'))
-        self.nav_indicator.configure(bg=colors.color('#a3ffbb'))
-        self.hero_canvas.configure(bg=colors.color('#132217'))
-        colors.recolor_canvas(self.hero_canvas)
-        self.settings_status.configure(text='Цвет сохранён: '+name)
+        self.cfg['color']=name
+        options=dict(colors.profile);options['custom']={};self.cfg['appearance']=colors.set_profile(options)
+        self.apply_appearance();self.save()
+        if hasattr(self,'appearance_panel'):self.appearance_panel.sync()
+    def apply_appearance(self,refresh_cards=False):
+        StyledOptionMenu.close_all();colors.select(self.cfg.get('color','Зеленый'))
+        self.configure(fg_color=colors.color('#101410'));self.page_host.configure(bg=colors.color('#101410'))
+        self.transition_line.configure(bg=colors.color('#101410'));self.nav_indicator.configure(bg=colors.color('#a3ffbb'))
+        self.hero_canvas.configure(bg=colors.color('#132217'));colors.recolor_canvas(self.hero_canvas)
+        try:self.attributes('-alpha',colors.profile['opacity'])
+        except tk.TclError:pass
+        if refresh_cards:
+            if hasattr(self,'visible_mods') and hasattr(self,'mod_list_context'):self.render_mods((self.visible_mods,*self.mod_list_context[:2]))
+            self.render_library()
+            for catalogue in self.resource_catalogs.values():
+                if catalogue.context:catalogue.render(catalogue.hits)
     def api(self,path,params=None):
         return packs.api(path,params)
     def mods(self):
         p=self.pages['Моды'];self.catalog_header(p,'МОДЫ','Каталог Modrinth: поиск и установка модов в выбранную сборку')
+        self.target_selector(p)
         context=ct.CTkFrame(p,fg_color='#181c1d',corner_radius=0,border_width=1,border_color='#3b4242');context.pack(fill='x',pady=(8,4))
         ct.CTkLabel(context,text='Сборка:').pack(side='left',padx=10,pady=7)
         self.mods_version=ct.CTkOptionMenu(context,values=VERSIONS,variable=self.version,command=self.choose_base,width=130,height=32);self.mods_version.pack(side='left',padx=(0,8))
@@ -773,7 +1006,10 @@ class Launcher(ct.CTk):
         self.mod_offset=0;self.pagination(catalog,'mod')
         self.modlist=ct.CTkScrollableFrame(catalog,fg_color='#111515',corner_radius=0); self.modlist.pack(fill='both',expand=True)
     def catalog_header(self,parent,title,subtitle):
-        ct.CTkLabel(parent,text=title,font=('Consolas',30,'bold'),anchor='w').pack(fill='x',pady=(0,2))
+        heading=ct.CTkFrame(parent,fg_color='transparent');heading.pack(fill='x',pady=(0,2))
+        ct.CTkLabel(heading,text=title,font=('Consolas',30,'bold'),anchor='w').pack(side='left')
+        kind={'МОДЫ':'mod','СБОРКИ':'modpack','РЕСУРСПАКИ':'resourcepack','ШЕЙДЕРЫ':'shader'}.get(title)
+        if kind:ct.CTkButton(heading,text='★ Избранное',width=140,height=30,fg_color='#344f40',command=lambda:self.show_favorites(kind)).pack(side='right')
         ct.CTkLabel(parent,text=subtitle,font=('Segoe UI',12),text_color='#9ab7a7',anchor='w').pack(fill='x')
         ct.CTkFrame(parent,height=3,corner_radius=0,fg_color='#168653').pack(fill='x',pady=(5,0))
     def pagination(self,parent,scope):
@@ -832,6 +1068,7 @@ class Launcher(ct.CTk):
         data,version=result[:2]; loader_type=result[2] if len(result)>2 else 'fabric'
         self.search_generation+=1; generation=self.search_generation; self.mod_widgets={}
         for w in self.modlist.winfo_children():w.destroy()
+        self.visible_mods=list(data)
         self.remaining_mods=list(data);self.mod_list_context=(version,loader_type,generation);self.more_mods=None
         self.append_mod_cards()
     def append_mod_cards(self):
@@ -840,14 +1077,15 @@ class Launcher(ct.CTk):
         batch=self.remaining_mods[:6];self.remaining_mods=self.remaining_mods[6:]
         for m in batch:
             f=ct.CTkFrame(self.modlist,fg_color='#202425',corner_radius=0,border_width=1,border_color='#3b4242'); f.pack(fill='x',pady=4,padx=0)
-            top=ct.CTkFrame(f,fg_color='transparent'); top.pack(fill='x',padx=10,pady=8)
+            top=ct.CTkFrame(f,fg_color='transparent'); top.pack(fill='x',padx=10,pady=4 if colors.profile['density']=='Компактные' else 8)
             icon=ct.CTkLabel(top,text='◈',width=56,height=56,font=('Segoe UI',26),text_color='#9affb5',fg_color='#111515',corner_radius=0); icon.pack(side='left',anchor='center',padx=(0,12))
             actions=ct.CTkFrame(top,fg_color='transparent',width=104);actions.pack(side='right',padx=(10,0))
             ct.CTkButton(actions,text='Скачать',width=100,height=28,corner_radius=0,border_width=1,border_color='#6aab78',command=lambda mid=m['project_id'],v=version,k=loader_type:self.start_mod_download(mid,v,k)).pack(pady=(0,2))
             ct.CTkButton(actions,text='Страница',width=100,height=28,corner_radius=0,fg_color='#344f40',command=lambda mod=m,v=version,k=loader_type:self.open_details(mod,v,k)).pack(pady=(0,0))
+            self.favorite_button(actions,m,'mod')
             copy=ct.CTkFrame(top,fg_color='transparent'); copy.pack(side='left',fill='x',expand=True)
             ct.CTkLabel(copy,text=m['title']+'  от '+m.get('author','—'),font=('Segoe UI',14,'bold'),wraplength=560,justify='left').pack(anchor='w')
-            summary=ct.CTkLabel(copy,text=m['description'][:240],wraplength=560,justify='left',text_color='#c2ceca',font=('Segoe UI',12)); summary.pack(anchor='w',pady=2)
+            summary=ct.CTkLabel(copy,text=m['description'][:110 if colors.profile['density']=='Компактные' else 240],wraplength=560,justify='left',text_color='#c2ceca',font=('Segoe UI',12)); summary.pack(anchor='w',pady=2)
             note=ct.CTkLabel(copy,text='',text_color='#929d97',font=('Segoe UI',10),wraplength=560,justify='left');note.pack(anchor='w')
             note.stats=f'↓ {m.get("downloads",0):,}  •  '+', '.join(m.get('categories',[])[:6]);note.configure(text=note.stats)
             self.mod_widgets[m['project_id']]=(icon,summary,note)
@@ -884,7 +1122,10 @@ class Launcher(ct.CTk):
         ct.CTkButton(controls,text='Русский',width=100,command=lambda:language(False)).pack(side='left',padx=(0,8))
         ct.CTkButton(controls,text='Оригинал',width=100,fg_color='#314e3b',command=lambda:language(True)).pack(side='left')
         is_pack=mod.get('project_type')=='modpack' or mod.get('_is_pack',False)
-        ct.CTkButton(controls,text=f'Скачать • {version}',width=175,command=(lambda:self.start_pack_install(mod,version,loader_type)) if is_pack else (lambda:self.start_mod_download(mod['project_id'],version,loader_type))).pack(side='right')
+        if mod.get('_catalog_type') in self.resource_catalogs:
+            action=lambda:self.resource_catalogs[mod['_catalog_type']].start_install(mod,version)
+        else:action=(lambda:self.start_pack_install(mod,version,loader_type)) if is_pack else (lambda:self.start_mod_download(mod['project_id'],version,loader_type))
+        ct.CTkButton(controls,text=f'Скачать • {version}',width=175,command=action).pack(side='right')
         threading.Thread(target=self.load_details,args=(mod,window,textbox,note),daemon=True).start()
     def load_details(self,mod,window,textbox,note):
         original=''; translated=''; error=''
@@ -896,33 +1137,10 @@ class Launcher(ct.CTk):
         except Exception: original=mod['description']; error='Не удалось загрузить подробное описание. Показано краткое.'
         self.events.put(('details',(window,textbox,note,original,translated,error)))
     def download_mod(self,mid,version,seen,pinned=None,target_folder=None,loader_type='fabric'):
-        if mid in seen:return
-        seen.add(mid)
-        versions=[self.api('version/'+pinned)] if pinned else self.api(f'project/{mid}/version',{'game_versions':json.dumps([version]),'loaders':json.dumps([loader_type])})
-        versions=[v for v in versions if version in v['game_versions'] and loader_type in v['loaders']]
-        if not versions:raise ValueError(f'Нет совместимого {loader_type.title()}-файла для мода {mid}.')
-        release=max(versions,key=lambda v:v['date_published'])
-        for d in release.get('dependencies',[]):
-            if d['dependency_type']=='required':
-                dep=d.get('project_id')
-                if not dep and d.get('version_id'):dep=self.api('version/'+d['version_id'])['project_id']
-                if not dep:raise ValueError('У зависимости отсутствует проект Modrinth.')
-                self.download_mod(dep,version,seen,d.get('version_id'),target_folder,loader_type)
-        files=[f for f in release['files'] if f['filename'].endswith('.jar')]
-        if not files:raise ValueError('В релизе нет JAR-файла.')
-        f=next((f for f in files if f.get('primary')),files[0]); url=f['url']
-        from urllib.parse import urlparse
-        host=urlparse(url).hostname or ''
-        if host!='cdn.modrinth.com' or not url.startswith('https://'):raise ValueError('Неожиданный адрес загрузки Modrinth.')
-        name=f['filename']
-        if Path(name).name!=name or not name.endswith('.jar'):raise ValueError('Недопустимое имя файла.')
-        folder=target_folder or ROOT/'instances'/version/'mods'; folder.mkdir(parents=True,exist_ok=True)
-        self.events.put(('status','Скачиваем '+name))
-        r=requests.get(url,headers={'User-Agent':'CHUNKLauncher/1.1'},timeout=120); r.raise_for_status()
-        for algo,expected in f['hashes'].items():
-            if algo in ('sha512','sha1') and hashlib.new(algo,r.content).hexdigest()!=expected.lower():raise ValueError('Ошибка проверки файла.')
-        tmp=folder/(name+'.part'); tmp.write_bytes(r.content); tmp.replace(folder/name)
-        self.events.put(('status','Установлен: '+name))
+        folder=Path(target_folder).parent if target_folder else ROOT/'instances'/version
+        item={'version':version,'loader_type':loader_type}
+        transfer=self.transfer or instance_tools.Transfer(lambda text,value:self.events.put(('progress',(text,value))))
+        self.finish_maintenance(instance_tools.apply_mods(folder,item,[(mid,pinned)],transfer))
 
 if __name__=='__main__':
     try:

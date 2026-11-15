@@ -4,30 +4,44 @@ import json
 import re
 import uuid
 import zipfile
+import copy
+import threading
+import time
 from pathlib import Path, PurePosixPath
 import requests
 from loaders import VERSIONS, COMPATIBILITY
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+_api_cache={}
+_cache_lock=threading.Lock()
 
 def session():
     s=requests.Session()
-    s.headers['User-Agent']='CHUNKLauncher/2.0 (personal Windows launcher)'
+    s.headers['User-Agent']='TUL4NLauncher/2026.11.15.8 (github.com/hikorigy-ship-it/tul4n-launcher)'
     s.mount('https://',HTTPAdapter(max_retries=Retry(total=2,backoff_factor=.5,status_forcelist=[429,500,502,503,504])))
     return s
 
 def api(path,params=None):
+    key=(path,json.dumps(params or {},sort_keys=True));now=time.monotonic()
+    with _cache_lock:
+        cached=_api_cache.get(key)
+        if cached and cached[0]>now:return copy.deepcopy(cached[1])
     with session() as s:
         r=s.get('https://api.modrinth.com/v2/'+path,params=params,timeout=(10,35))
-        r.raise_for_status(); return r.json()
+        r.raise_for_status();data=r.json()
+    with _cache_lock:
+        if len(_api_cache)>=128:_api_cache.pop(next(iter(_api_cache)))
+        _api_cache[key]=(now+(60 if path=='search' else 180),copy.deepcopy(data))
+    return data
 
 def search(query,version,loader_type,project_type='mod',limit=20,offset=0,category=None,order=None,with_total=False):
-    facets=[['project_type:'+project_type],['categories:'+loader_type],['versions:'+version]]
+    facets=[['project_type:'+project_type],['versions:'+version]]
+    if loader_type:facets.append(['categories:'+loader_type])
     if category:facets.append(['categories:'+category])
     response=api('search',{'query':query,'facets':json.dumps(facets),'index':order or ('relevance' if query else 'downloads'),'limit':limit,'offset':offset})
     data=response['hits'];total=response.get('total_hits',len(data))
     notice=''
-    if query:
+    if query and project_type in ('mod','modpack'):
         # Prioritize names without discarding legitimate description-based searches.
         named=[x for x in data if query.casefold() in x['title'].casefold()]
         if named:data=named
@@ -109,7 +123,7 @@ def list_instances(root):
             except (ValueError,KeyError,OSError): pass
     return result
 
-def download(url,path,hashes=None):
+def download(url,path,hashes=None,transfer=None):
     from urllib.parse import urlparse
     host=urlparse(url).hostname or ''
     allowed=('cdn.modrinth.com','github.com','raw.githubusercontent.com','objects.githubusercontent.com','resources.download.minecraft.net','edge.forgecdn.net','mediafilez.forgecdn.net')
@@ -118,6 +132,9 @@ def download(url,path,hashes=None):
     tmp=path.with_name(path.name+'.part')
     digests={algo:hashlib.new(algo) for algo in (hashes or {}) if algo in ('sha1','sha512')}
     try:
+        if transfer:
+            transfer.download({'url':url,'filename':path.name,'hashes':hashes or {}},tmp,allowed_hosts=allowed)
+            tmp.replace(path);return
         with session() as s, s.get(url,stream=True,timeout=(10,90)) as r:
             r.raise_for_status()
             total=0
@@ -133,7 +150,7 @@ def download(url,path,hashes=None):
     finally:
         if tmp.exists():tmp.unlink()
 
-def unpack(archive,folder,version,notify,loader_type='fabric'):
+def unpack(archive,folder,version,notify,loader_type='fabric',transfer=None):
     with zipfile.ZipFile(archive) as z:
         index=json.loads(z.read('modrinth.index.json'))
         deps=index['dependencies']
@@ -155,20 +172,24 @@ def unpack(archive,folder,version,notify,loader_type='fabric'):
                     if expanded>2*1024**3:raise ValueError('Слишком большой размер распакованной сборки')
                     overrides.append((item,target))
         for i,f in enumerate(files):
+            if transfer:transfer.check()
             notify(f'Файлы сборки: {i+1}/{len(files)} • '+Path(f['path']).name,(i+1)/(len(files)+1))
             last=None
             for url in f.get('downloads',[]):
-                try:download(url,safe_path(folder,f['path']),f['hashes']); last=None; break
-                except Exception as e:last=e
+                try:download(url,safe_path(folder,f['path']),f['hashes'],transfer); last=None; break
+                except Exception as e:
+                    if transfer:transfer.check()
+                    last=e
             if last or not f.get('downloads'):raise ValueError('Не удалось скачать '+f['path']+': '+str(last))
         for item,target in overrides:
+            if transfer:transfer.check()
             target.parent.mkdir(parents=True,exist_ok=True)
             with z.open(item) as src,target.open('wb') as dst:
                 import shutil
                 shutil.copyfileobj(src,dst)
         return deps[key]
 
-def install(root,project,version,notify,loader_type='fabric'):
+def install(root,project,version,notify,loader_type='fabric',transfer=None):
     versions=api('project/'+project['project_id']+'/version',{'game_versions':json.dumps([version]),'loaders':json.dumps([loader_type])})
     versions=[v for v in versions if version in v['game_versions'] and loader_type in v['loaders']]
     if not versions:raise ValueError('Нет совместимой сборки '+loader_type.title()+' для '+version)
@@ -179,13 +200,13 @@ def install(root,project,version,notify,loader_type='fabric'):
     cache=Path(root)/'cache'/'modpacks'; cache.mkdir(parents=True,exist_ok=True)
     archive=cache/(release['id']+'.mrpack')
     notify('Скачиваем архив '+project['title'],0)
-    download(file['url'],archive,file['hashes'])
+    download(file['url'],archive,file['hashes'],transfer)
     # Unique staging directory; incomplete packs never appear in the library.
     instance_id='pack-'+uuid.uuid4().hex[:12]
     staging=Path(root)/'instances'/('.install-'+uuid.uuid4().hex)
     staging.mkdir(parents=True,exist_ok=False)
     try:
-        loader=unpack(archive,staging,version,notify,loader_type)
+        loader=unpack(archive,staging,version,notify,loader_type,transfer)
         data={'id':instance_id,'name':project['title'],'version':version,'loader':loader,'loader_type':loader_type,'source':'modrinth','project_id':project['project_id'],'release_id':release['id']}
         data.update(description=project.get('description',''),cover_url=project.get('featured_gallery') or project.get('icon_url') or '')
         (staging/'.chunk.json').write_text(json.dumps(data,ensure_ascii=False,indent=2),'utf-8')
