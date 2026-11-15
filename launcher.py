@@ -16,8 +16,10 @@ import packs
 import loaders
 import updater
 from hover import AnimatedButton
+from menus import StyledOptionMenu
 
 ct.CTkButton = AnimatedButton
+ct.CTkOptionMenu = StyledOptionMenu
 
 class MediaWorkers:
     """Bounded background work that never keeps a closed launcher alive."""
@@ -84,12 +86,12 @@ ct.set_appearance_mode('dark')
 DrawEngine.preferred_drawing_method='polygon_shapes'
 ct.set_default_color_theme('blue')
 for widget in ('CTkButton','CTkOptionMenu'):
-    ct.ThemeManager.theme[widget]['fg_color']=['#6845e8','#6845e8']
-    ct.ThemeManager.theme[widget]['hover_color']=['#7958f2','#7958f2']
-ct.ThemeManager.theme['CTkOptionMenu']['button_color']=['#5635cf','#5635cf']
-ct.ThemeManager.theme['CTkOptionMenu']['button_hover_color']=['#7958f2','#7958f2']
-ct.ThemeManager.theme['CTkEntry']['fg_color']=['#22222c','#22222c']
-ct.ThemeManager.theme['CTkEntry']['border_color']=['#32313e','#32313e']
+    ct.ThemeManager.theme[widget]['fg_color']=['#168653','#168653']
+    ct.ThemeManager.theme[widget]['hover_color']=['#20a56a','#20a56a']
+ct.ThemeManager.theme['CTkOptionMenu']['button_color']=['#126b43','#126b43']
+ct.ThemeManager.theme['CTkOptionMenu']['button_hover_color']=['#20a56a','#20a56a']
+ct.ThemeManager.theme['CTkEntry']['fg_color']=['#222c22','#222c22']
+ct.ThemeManager.theme['CTkEntry']['border_color']=['#313e32','#313e32']
 
 class Launcher(ct.CTk):
     def __init__(self):
@@ -98,7 +100,7 @@ class Launcher(ct.CTk):
         icon = Path(getattr(sys, '_MEIPASS', ROOT)) / 'chunk.ico'
         if icon.exists(): self.iconbitmap(str(icon))
         self.geometry('1180x780'); self.minsize(1060, 720)
-        self.configure(fg_color='#101014')
+        self.configure(fg_color='#101410')
         self.cfg = json.loads(CONFIG.read_text('utf-8')) if CONFIG.exists() else {}
         self.accounts = self.cfg.get('accounts', [])
         self.nick = ct.StringVar(value=self.cfg.get('nick', self.accounts[0] if self.accounts else ''))
@@ -116,25 +118,25 @@ class Launcher(ct.CTk):
         self.media_pool=MediaWorkers(max_workers=4)
         self.search_generation=0; self.mod_widgets={}
         self.grid_columnconfigure(1, weight=1); self.grid_rowconfigure(1, weight=1)
-        self.page_host=tk.Frame(self,bg='#101014',bd=0,highlightthickness=0)
+        self.page_host=tk.Frame(self,bg='#101410',bd=0,highlightthickness=0)
         self.page_host.grid(row=1,column=1,sticky='nsew',padx=(24,28),pady=(4,22))
         self.page_host.bind('<Configure>',self.queue_content_resize)
-        header=ct.CTkFrame(self,height=64,corner_radius=0,fg_color='#101014'); header.grid(row=0,column=1,sticky='ew',padx=(24,28)); header.grid_propagate(False)
-        self.transition_line=tk.Canvas(header,height=2,bg='#101014',highlightthickness=0,bd=0)
+        header=ct.CTkFrame(self,height=64,corner_radius=0,fg_color='#101410'); header.grid(row=0,column=1,sticky='ew',padx=(24,28)); header.grid_propagate(False)
+        self.transition_line=tk.Canvas(header,height=2,bg='#101410',highlightthickness=0,bd=0)
         self.transition_line.place(relx=0,rely=1,relwidth=1,anchor='sw')
-        ct.CTkLabel(header,text='С возвращением в свой мир!',font=('Segoe UI',15),text_color='#dddce9').pack(side='left',pady=18)
-        ct.CTkLabel(header,text='●  FABRIC · FORGE · NEOFORGE',font=('Segoe UI',11,'bold'),text_color='#a28af8').pack(side='right',pady=18)
-        side = ct.CTkFrame(self, width=185, corner_radius=0, fg_color='#101014'); side.grid(row=0,column=0,rowspan=2,sticky='ns')
+        ct.CTkLabel(header,text='С возвращением в свой мир!',font=('Segoe UI',15),text_color='#dce9dd').pack(side='left',pady=18)
+        ct.CTkLabel(header,text='●  FABRIC · FORGE · NEOFORGE',font=('Segoe UI',11,'bold'),text_color='#8af8a2').pack(side='right',pady=18)
+        side = ct.CTkFrame(self, width=185, corner_radius=0, fg_color='#101410'); side.grid(row=0,column=0,rowspan=2,sticky='ns')
         side.grid_propagate(False)
-        ct.CTkLabel(side,text='ϟ  TUL4N',font=('Segoe UI',23,'bold'),text_color='#f1efff').pack(pady=(19,3))
-        ct.CTkLabel(side,text='MINECRAFT LAUNCHER',font=('Segoe UI',9),text_color='#666378').pack(pady=(0,34))
+        ct.CTkLabel(side,text='ϟ  TUL4N',font=('Segoe UI',25,'bold'),text_color='#70e6a1').pack(pady=(19,3))
+        ct.CTkLabel(side,text='MINECRAFT LAUNCHER',font=('Segoe UI',9),text_color='#637866').pack(pady=(0,34))
         self.pages={}; self.nav={}
         for name,symbol in [('Главная','⌂'),('Моды','▦'),('Сборки','◫'),('Аккаунты','♙'),('Настройки','⚙')]:
-            b=ct.CTkButton(side,text=f'{symbol}   {name}',height=44,corner_radius=11,fg_color='transparent',text_color='#8b879d',hover_color='#24212f',anchor='w',font=('Segoe UI',14),command=lambda n=name:self.show(n)); b.pack(padx=12,pady=6,fill='x'); self.nav[name]=b
-            p=ct.CTkFrame(self.page_host,width=940,height=665,fg_color='#101014',corner_radius=0);p.pack_propagate(False);self.pages[name]=p
-        self.nav_indicator=tk.Frame(side,bg='#bba3ff',width=3,height=22)
-        profile=ct.CTkFrame(side,fg_color='#1b1a23',corner_radius=13); profile.pack(side='bottom',padx=12,pady=18,fill='x')
-        ct.CTkLabel(profile,text='◈  Офлайн-профиль',font=('Segoe UI',12,'bold'),text_color='#b8a4ff').pack(padx=10,pady=(12,4))
+            b=ct.CTkButton(side,text=f'{symbol}   {name}',height=44,corner_radius=11,fg_color='transparent',text_color='#879d8b',hover_color='#212f24',anchor='w',font=('Segoe UI',14),command=lambda n=name:self.show(n)); b.pack(padx=12,pady=6,fill='x'); self.nav[name]=b
+            p=ct.CTkFrame(self.page_host,width=940,height=665,fg_color='#101410',corner_radius=0);p.pack_propagate(False);self.pages[name]=p
+        self.nav_indicator=tk.Frame(side,bg='#a3ffbb',width=3,height=22)
+        profile=ct.CTkFrame(side,fg_color='#1a231b',corner_radius=13); profile.pack(side='bottom',padx=12,pady=18,fill='x')
+        ct.CTkLabel(profile,text='◈  Офлайн-профиль',font=('Segoe UI',12,'bold'),text_color='#a4ffb8').pack(padx=10,pady=(12,4))
         self.sidebar_nick=ct.CTkLabel(profile,text=self.nick.get() or 'Выберите ник',font=('Segoe UI',13)); self.sidebar_nick.pack(pady=(0,12))
         self.home(); self.mods(); self.builds(); self.profiles(); self.settings(); self.refresh_instances(); self.show('Главная')
         self.protocol('WM_DELETE_WINDOW',self.close)
@@ -143,17 +145,17 @@ class Launcher(ct.CTk):
         self.bind('<Configure>',self.on_window_resize,add='+')
         self.after(100,self.poll)
 
-    def label(self,p,text,size=16,color='#dce6ef'):
+    def label(self,p,text,size=16,color='#e6efdc'):
         w=ct.CTkLabel(p,text=text,font=('Segoe UI',size,'bold' if size>20 else 'normal'),text_color=color,wraplength=720,justify='left'); w.pack(anchor='w',pady=10); return w
     def show(self,n):
         if self.current_page==n:return
         previous=self.current_page
         if previous:
             self.pages[previous].place_forget()
-            self.nav[previous].configure(fg_color='transparent',text_color='#8b879d')
+            self.nav[previous].configure(fg_color='transparent',text_color='#879d8b')
         self.current_page=n
         self.pages[n].configure(width=self.content_size[0],height=self.content_size[1]);self.pages[n].place(x=0,y=0)
-        self.nav[n].configure(fg_color='#6845e8',text_color='#ffffff')
+        self.nav[n].configure(fg_color='#168653',text_color='#ffffff')
         if self.nav_animation:self.after_cancel(self.nav_animation);self.nav_animation=None
         self.after_idle(lambda:self.start_navigation_animation(n))
         if n=='Моды' and not getattr(self,'catalog_loaded',False) and not self.searching:self.after(80,self.start_search)
@@ -165,12 +167,13 @@ class Launcher(ct.CTk):
         target=button.winfo_y()+button.winfo_height()/2-11
         start=self.nav_y if self.nav_y is not None else target
         began=time.monotonic(); self.transition_line.delete('all')
-        line=self.transition_line.create_rectangle(0,0,0,2,fill='#a68aff',outline='')
+        line=self.transition_line.create_rectangle(0,0,0,2,fill='#8affa6',outline='')
         def frame():
             if self.closing or name!=self.current_page:return
             t=min(1,(time.monotonic()-began)/.23);ease=1-(1-t)**3
             self.nav_y=start+(target-start)*ease
             self.nav_indicator.place(x=5,y=round(self.nav_y),width=3,height=22)
+            self.pages[name].place_configure(y=round(10*(1-ease)))
             width=self.transition_line.winfo_width()
             self.transition_line.coords(line,width*ease-140,0,width*ease,2)
             if t<1:self.nav_animation=self.after(20,frame)
@@ -193,10 +196,10 @@ class Launcher(ct.CTk):
             now=time.monotonic()
             for i,item in enumerate(self.hero_canvas.find_withtag('spark')[::4]):
                 value=int(140+55*(1+math.sin(now*1.5+i))/2)
-                self.hero_canvas.itemconfigure(item,fill=f'#{value:02x}{int(value*.75):02x}ff')
+                self.hero_canvas.itemconfigure(item,fill=f'#{int(value*.55):02x}{value:02x}{int(value*.72):02x}')
             for i,item in enumerate(self.hero_canvas.find_withtag('glow')):
                 value=int(175+35*(1+math.sin(now*1.9+i))/2)
-                self.hero_canvas.itemconfigure(item,outline=f'#{value:02x}a0ff')
+                self.hero_canvas.itemconfigure(item,outline=f'#70{value:02x}a0')
         self.animation_job=self.after(100,self.animate_hero)
     def focus_search(self):
         self.show('Моды'); self.search.focus_set(); self.search.select_range(0,'end')
@@ -214,31 +217,31 @@ class Launcher(ct.CTk):
         tmp=CONFIG.with_suffix('.tmp'); tmp.write_text(json.dumps(self.cfg,ensure_ascii=False,indent=2),'utf-8'); tmp.replace(CONFIG)
     def home(self):
         p=self.pages['Главная']
-        hero=ct.CTkFrame(p,height=300,corner_radius=16,fg_color='#171322'); hero.pack(fill='x'); hero.pack_propagate(False)
-        self.hero_canvas=tk.Canvas(hero,bg='#171322',highlightthickness=0,bd=0); self.hero_canvas.place(relx=.48,rely=0,relwidth=.52,relheight=1)
+        hero=ct.CTkFrame(p,height=300,corner_radius=20,fg_color='#132217',border_width=1,border_color='#294735'); hero.pack(fill='x'); hero.pack_propagate(False)
+        self.hero_canvas=tk.Canvas(hero,bg='#132217',highlightthickness=0,bd=0); self.hero_canvas.place(relx=.48,rely=0,relwidth=.52,relheight=1)
         self.hero_canvas.bind('<Configure>',self.draw_hero)
-        copy=ct.CTkFrame(hero,fg_color='#171322',corner_radius=0); copy.place(x=24,y=20)
+        copy=ct.CTkFrame(hero,fg_color='#132217',corner_radius=0); copy.place(x=24,y=20)
         ct.CTkLabel(copy,text='Добро пожаловать',font=('Segoe UI',29,'bold'),text_color='white').pack(anchor='w')
-        ct.CTkLabel(copy,text='в TUL4N',font=('Segoe UI',31,'bold'),text_color='#916bff').pack(anchor='w')
-        ct.CTkLabel(copy,text='Твой путь, твой стиль, твоя игра',font=('Segoe UI',13),text_color='#898298').pack(anchor='w',pady=(7,17))
+        ct.CTkLabel(copy,text='в TUL4N',font=('Segoe UI',31,'bold'),text_color='#6bff91').pack(anchor='w')
+        ct.CTkLabel(copy,text='Твой мир. Твои правила.',font=('Segoe UI',14),text_color='#a0b9ab').pack(anchor='w',pady=(7,17))
         actions=ct.CTkFrame(copy,fg_color='transparent'); actions.pack(anchor='w')
-        self.play=ct.CTkButton(actions,text='▷  Играть',width=135,height=46,corner_radius=9,font=('Segoe UI',17,'bold'),command=self.begin_launch); self.play.pack(side='left',padx=(0,10))
-        ct.CTkOptionMenu(actions,values=VERSIONS,variable=self.version,command=self.choose_base,width=118,height=46,fg_color='#24212e',button_color='#24212e',button_hover_color='#373044',font=('Segoe UI',14)).pack(side='left',padx=(0,8))
-        ct.CTkOptionMenu(actions,values=loaders.LOADERS,variable=self.loader_type,command=lambda _:self.choose_base(self.version.get()),width=120,height=46,fg_color='#24212e',button_color='#24212e',button_hover_color='#373044',font=('Segoe UI',14)).pack(side='left')
-        ct.CTkLabel(copy,text='MINECRAFT JAVA EDITION',font=('Segoe UI',10,'bold'),text_color='#a095b4').pack(anchor='w',pady=(10,0))
-        self.status=ct.CTkLabel(p,text='Готов к новому приключению',font=('Segoe UI',12),text_color='#928ba5',wraplength=800,anchor='w',justify='left'); self.status.pack(fill='x',pady=(10,14))
+        self.play=ct.CTkButton(actions,text='▷  Играть',width=135,height=46,corner_radius=12,border_width=1,border_color='#44bd80',font=('Segoe UI',17,'bold'),command=self.begin_launch); self.play.pack(side='left',padx=(0,10))
+        ct.CTkOptionMenu(actions,values=VERSIONS,variable=self.version,command=self.choose_base,width=118,height=46,fg_color='#212e24',button_color='#212e24',button_hover_color='#304437',font=('Segoe UI',14)).pack(side='left',padx=(0,8))
+        ct.CTkOptionMenu(actions,values=loaders.LOADERS,variable=self.loader_type,command=lambda _:self.choose_base(self.version.get()),width=120,height=46,fg_color='#212e24',button_color='#212e24',button_hover_color='#304437',font=('Segoe UI',14)).pack(side='left')
+        ct.CTkLabel(copy,text='MINECRAFT JAVA EDITION',font=('Segoe UI',10,'bold'),text_color='#95b4a0').pack(anchor='w',pady=(10,0))
+        self.status=ct.CTkLabel(p,text='Готов к новому приключению',font=('Segoe UI',12),text_color='#8ba592',wraplength=800,anchor='w',justify='left'); self.status.pack(fill='x',pady=(10,14))
         self.instance_menu=ct.CTkOptionMenu(p,values=['Загрузка сборок…'],variable=self.instance_name,command=self.choose_instance,height=34); self.instance_menu.pack(fill='x',pady=(0,10))
-        self.operation_progress=ct.CTkProgressBar(p,height=4,progress_color='#a487ff'); self.operation_progress.pack(fill='x',pady=(0,8)); self.operation_progress.set(0)
+        self.operation_progress=ct.CTkProgressBar(p,height=4,progress_color='#87ffa4'); self.operation_progress.pack(fill='x',pady=(0,8)); self.operation_progress.set(0)
         lower=ct.CTkFrame(p,fg_color='transparent'); lower.pack(fill='both',expand=True); lower.grid_columnconfigure((0,1),weight=1); lower.grid_rowconfigure(0,weight=1)
-        left=ct.CTkFrame(lower,fg_color='#19191f',corner_radius=15); left.grid(row=0,column=0,sticky='nsew',padx=(0,8))
-        right=ct.CTkFrame(lower,fg_color='#19191f',corner_radius=15); right.grid(row=0,column=1,sticky='nsew',padx=(8,0))
+        left=ct.CTkFrame(lower,fg_color='#191f19',corner_radius=15); left.grid(row=0,column=0,sticky='nsew',padx=(0,8))
+        right=ct.CTkFrame(lower,fg_color='#191f19',corner_radius=15); right.grid(row=0,column=1,sticky='nsew',padx=(8,0))
         ct.CTkLabel(left,text='▤  Твой профиль',font=('Segoe UI',18,'bold')).pack(anchor='w',padx=20,pady=(18,8))
-        ct.CTkLabel(left,text='Выбери ник для следующего приключения',text_color='#888296',font=('Segoe UI',12)).pack(anchor='w',padx=20,pady=(0,15))
-        self.account_menu=ct.CTkOptionMenu(left,values=self.accounts or ['Создайте профиль'],variable=self.nick,width=280,height=42,fg_color='#282530',button_color='#332a46',command=lambda n:self.select_account(n)); self.account_menu.pack(anchor='w',padx=20)
-        ct.CTkButton(left,text='＋  Создать аккаунт',fg_color='#282530',hover_color='#383043',height=40,command=lambda:self.show('Аккаунты')).pack(fill='x',padx=20,pady=16)
+        ct.CTkLabel(left,text='Выбери ник для следующего приключения',text_color='#829688',font=('Segoe UI',12)).pack(anchor='w',padx=20,pady=(0,15))
+        self.account_menu=ct.CTkOptionMenu(left,values=self.accounts or ['Создайте профиль'],variable=self.nick,width=280,height=42,fg_color='#253028',button_color='#2a4633',command=lambda n:self.select_account(n)); self.account_menu.pack(anchor='w',padx=20)
+        ct.CTkButton(left,text='＋  Создать аккаунт',fg_color='#253028',hover_color='#304338',height=40,command=lambda:self.show('Аккаунты')).pack(fill='x',padx=20,pady=16)
         ct.CTkLabel(right,text='✧  Мастерская модов',font=('Segoe UI',18,'bold')).pack(anchor='w',padx=20,pady=(18,8))
-        ct.CTkLabel(right,text='MODRINTH',text_color='#b195ff',font=('Segoe UI',11,'bold')).pack(anchor='w',padx=20)
-        ct.CTkLabel(right,text='Найди новые возможности для своего мира.\nМоды и зависимости — одним нажатием.',text_color='#9e96af',font=('Segoe UI',13),justify='left').pack(anchor='w',padx=20,pady=12)
+        ct.CTkLabel(right,text='MODRINTH',text_color='#95ffb1',font=('Segoe UI',11,'bold')).pack(anchor='w',padx=20)
+        ct.CTkLabel(right,text='Найди новые возможности для своего мира.\nМоды и зависимости — одним нажатием.',text_color='#96af9e',font=('Segoe UI',13),justify='left').pack(anchor='w',padx=20,pady=12)
         ct.CTkButton(right,text='Открыть каталог  →',height=40,command=lambda:self.show('Моды')).pack(fill='x',padx=20,pady=(0,20))
     def draw_hero(self,event):
         self.hero_target_size=(max(event.width,1),max(event.height,1))
@@ -252,25 +255,25 @@ class Launcher(ct.CTk):
             if (w,h)!=(previous_w,previous_h):c.scale('all',0,0,w/previous_w,h/previous_h)
             self.hero_size=(w,h)
             return
-        # Native vector artwork: an isometric amethyst cavern.
+        # Native vector artwork: an isometric emerald cavern.
         for x in range(0,w,4):
-            t=x/max(w,1); c.create_rectangle(x,0,x+4,h,fill=f'#{int(23+15*t):02x}{int(19+7*t):02x}{int(34+28*t):02x}',outline='')
+            t=x/max(w,1); c.create_rectangle(x,0,x+4,h,fill=f'#{int(19+7*t):02x}{int(34+28*t):02x}{int(23+15*t):02x}',outline='')
         import random
         rng=random.Random(42)
         for i in range(55):
-            x=rng.randint(0,max(w,1)); y=rng.randint(0,max(h,1)); r=rng.choice([1,1,2]); c.create_oval(x,y,x+r,y+r,fill=rng.choice(['#75609b','#493259','#b992ff']),outline='',tags='spark')
+            x=rng.randint(0,max(w,1)); y=rng.randint(0,max(h,1)); r=rng.choice([1,1,2]); c.create_oval(x,y,x+r,y+r,fill=rng.choice(['#609b75','#325949','#92ffb9']),outline='',tags='spark')
         def cube(x,y,s,top,left,right):
             c.create_polygon(x,y-s/2,x+s,y,x,y+s/2,x-s,y,fill=top,outline='')
             c.create_polygon(x-s,y,x,y+s/2,x,y+s*1.5,x-s,y+s,fill=left,outline='')
             c.create_polygon(x,y+s/2,x+s,y,x+s,y+s,x,y+s*1.5,fill=right,outline='')
         for row in range(3):
             for col in range(5):
-                cube(w*.5+(col-2)*62+(row%2)*30,h*.68+row*33,32,'#443357','#211d30','#30233f')
+                cube(w*.5+(col-2)*62+(row%2)*30,h*.68+row*33,32,'#335744','#1d3021','#233f30')
         for x,y,s in [(w*.52,h*.43,68),(w*.74,h*.52,45),(w*.29,h*.68,34),(w*.88,h*.76,28)]:
-            c.create_polygon(x-s*.65,y+s*.8,x-s*.4,y-s*.3,x,y-s*1.45,x+s*.45,y-s*.35,x+s*.7,y+s*.8,fill='#9861f1',outline='#ba94ff',width=2,tags='glow')
-            c.create_polygon(x,y-s*1.45,x+s*.45,y-s*.35,x+s*.7,y+s*.8,x,y+s*.65,fill='#6741b6',outline='')
-            c.create_line(x-s*.4,y-s*.3,x,y-s*1.45,fill='#eddbff',width=3)
-        c.create_text(w*.6,h*.91,text='THE AMETHYST CAVES',fill='#ab90d6',font=('Segoe UI',10,'bold'))
+            c.create_polygon(x-s*.65,y+s*.8,x-s*.4,y-s*.3,x,y-s*1.45,x+s*.45,y-s*.35,x+s*.7,y+s*.8,fill='#61f198',outline='#94ffba',width=2,tags='glow')
+            c.create_polygon(x,y-s*1.45,x+s*.45,y-s*.35,x+s*.7,y+s*.8,x,y+s*.65,fill='#41b667',outline='')
+            c.create_line(x-s*.4,y-s*.3,x,y-s*1.45,fill='#dbffed',width=3)
+        c.create_text(w*.6,h*.91,text='THE EMERALD CAVES',fill='#90d6ab',font=('Segoe UI',10,'bold'))
         self.hero_size=(w,h)
     def work(self,fn):
         if self.busy:
@@ -400,8 +403,8 @@ class Launcher(ct.CTk):
         self.status.configure(text='Выбрана сборка: '+instance['name'])
     def builds(self):
         p=self.pages['Сборки']; self.label(p,'Твои сборки',32)
-        self.label(p,'Отдельные моды, настройки и миры для каждого приключения.',13,'#a79bb8')
-        tabs=ct.CTkTabview(p,fg_color='#19191f',segmented_button_selected_color='#6845e8'); tabs.pack(fill='both',expand=True)
+        self.label(p,'Отдельные моды, настройки и миры для каждого приключения.',13,'#9bb8a7')
+        tabs=ct.CTkTabview(p,fg_color='#191f19',segmented_button_selected_color='#168653'); tabs.pack(fill='both',expand=True)
         own=tabs.add('Мои сборки'); catalog=tabs.add('Modrinth')
         form=ct.CTkFrame(own,fg_color='transparent'); form.pack(fill='x',pady=8)
         self.build_name=ct.CTkEntry(form,placeholder_text='Название новой сборки',width=270,height=38); self.build_name.pack(side='left',padx=(4,10))
@@ -416,7 +419,7 @@ class Launcher(ct.CTk):
         self.pack_search_button=ct.CTkButton(tools,text='Найти сборки',command=self.search_packs); self.pack_search_button.pack(side='left')
         self.pack_query.bind('<Return>',lambda _:self.search_packs())
         self.pack_results=ct.CTkScrollableFrame(catalog,fg_color='transparent'); self.pack_results.pack(fill='both',expand=True,pady=12)
-        self.pack_status=ct.CTkLabel(p,text='Выберите готовую сборку Modrinth или создайте свою.',wraplength=850,text_color='#b6a4d0'); self.pack_status.pack(fill='x',pady=8)
+        self.pack_status=ct.CTkLabel(p,text='Выберите готовую сборку Modrinth или создайте свою.',wraplength=850,text_color='#a4d0b6'); self.pack_status.pack(fill='x',pady=8)
     def create_build(self):
         try:
             item=packs.new_instance(ROOT,self.build_name.get(),self.build_version.get(),loader_type=self.build_loader.get().lower())
@@ -427,20 +430,20 @@ class Launcher(ct.CTk):
         for widget in self.library.winfo_children():widget.destroy()
         for item in self.instances:
             if item['source']=='base' and item['id']!=self.active_id and not (ROOT/'instances'/item['id']).exists():continue
-            card=ct.CTkFrame(self.library,fg_color='#282331'); card.pack(fill='x',pady=5)
+            card=ct.CTkFrame(self.library,fg_color='#233128'); card.pack(fill='x',pady=5)
             count=len(list((ROOT/'instances'/item['id']/'mods').glob('*.jar')))
             title=('●  ' if item['id']==self.active_id else '◫  ')+item['name']
             ct.CTkLabel(card,text=title,font=('Segoe UI',17,'bold'),wraplength=520).pack(anchor='w',padx=15,pady=(12,0))
-            ct.CTkLabel(card,text=f'{item.get("loader_type","fabric").title()} {item["version"]}  •  модов: {count}  •  '+('Modrinth' if item['source']=='modrinth' else 'Локальная'),text_color='#a79ab7').pack(anchor='w',padx=15)
+            ct.CTkLabel(card,text=f'{item.get("loader_type","fabric").title()} {item["version"]}  •  модов: {count}  •  '+('Modrinth' if item['source']=='modrinth' else 'Локальная'),text_color='#9ab7a7').pack(anchor='w',padx=15)
             row=ct.CTkFrame(card,fg_color='transparent'); row.pack(fill='x',padx=15,pady=12)
             ct.CTkButton(row,text='Выбрать сборку',width=165,command=lambda x=item:self.activate_instance(x)).pack(side='right')
-            ct.CTkButton(row,text='Папка',fg_color='#40344f',width=85,command=lambda x=item:self.open_instance_folder(x)).pack(side='right',padx=8)
-            ct.CTkButton(row,text='Моды',fg_color='#40344f',width=80,command=lambda x=item:self.manage_mods(x)).pack(side='right')
+            ct.CTkButton(row,text='Папка',fg_color='#344f40',width=85,command=lambda x=item:self.open_instance_folder(x)).pack(side='right',padx=8)
+            ct.CTkButton(row,text='Моды',fg_color='#344f40',width=80,command=lambda x=item:self.manage_mods(x)).pack(side='right')
     def manage_mods(self,item):
         window=ct.CTkToplevel(self); window.title('Моды • '+item['name']); window.geometry('740x570')
         ct.CTkLabel(window,text=item['name'],font=('Segoe UI',23,'bold'),wraplength=680).pack(anchor='w',padx=20,pady=(20,5))
-        note=ct.CTkLabel(window,text='Включайте и отключайте моды. Изменения действуют при следующем запуске.',wraplength=680,text_color='#af9cc9'); note.pack(anchor='w',padx=20,pady=8)
-        panel=ct.CTkScrollableFrame(window,fg_color='#211d29'); panel.pack(fill='both',expand=True,padx=20,pady=15)
+        note=ct.CTkLabel(window,text='Включайте и отключайте моды. Изменения действуют при следующем запуске.',wraplength=680,text_color='#9cc9af'); note.pack(anchor='w',padx=20,pady=8)
+        panel=ct.CTkScrollableFrame(window,fg_color='#1d2921'); panel.pack(fill='both',expand=True,padx=20,pady=15)
         folder=ROOT/'instances'/item['id']/'mods'
         files=sorted([p for p in folder.glob('*') if p.is_file() and (p.name.endswith('.jar') or p.name.endswith('.jar.disabled'))])
         if not files:ct.CTkLabel(panel,text='Модов пока нет. Выберите сборку и откройте каталог «Моды».',wraplength=620).pack(pady=30)
@@ -456,7 +459,7 @@ class Launcher(ct.CTk):
                     if destination.exists():raise ValueError('Файл с таким именем уже существует')
                     source.rename(destination); note.configure(text='Состояние мода сохранено.'); self.render_library()
                 except Exception as e:v.set(not v.get()); note.configure(text='Ошибка: '+str(e))
-            ct.CTkSwitch(panel,text=path.name.removesuffix('.disabled'),variable=enabled,command=toggle,progress_color='#6845e8',font=('Segoe UI',12)).pack(anchor='w',padx=10,pady=9)
+            ct.CTkSwitch(panel,text=path.name.removesuffix('.disabled'),variable=enabled,command=toggle,progress_color='#168653',font=('Segoe UI',12)).pack(anchor='w',padx=10,pady=9)
     def open_instance_folder(self,item):
         folder=ROOT/'instances'/item['id']; folder.mkdir(parents=True,exist_ok=True); os.startfile(folder)
     def search_packs(self):
@@ -472,11 +475,11 @@ class Launcher(ct.CTk):
     def render_pack_results(self,result,version,loader_type='fabric'):
         for widget in self.pack_results.winfo_children():widget.destroy()
         for item in result:
-            card=ct.CTkFrame(self.pack_results,fg_color='#282331'); card.pack(fill='x',pady=6)
+            card=ct.CTkFrame(self.pack_results,fg_color='#233128'); card.pack(fill='x',pady=6)
             ct.CTkLabel(card,text='◫  '+item['title'],font=('Segoe UI',19,'bold'),wraplength=700).pack(anchor='w',padx=15,pady=(12,4))
-            ct.CTkLabel(card,text=item['description'],wraplength=700,justify='left',text_color='#beb0ce').pack(anchor='w',padx=15)
+            ct.CTkLabel(card,text=item['description'],wraplength=700,justify='left',text_color='#b0cebe').pack(anchor='w',padx=15)
             tools=ct.CTkFrame(card,fg_color='transparent'); tools.pack(fill='x',padx=15,pady=12)
-            ct.CTkLabel(tools,text=f'{loader_type.title()} {version} • ↓ {item["downloads"]:,}',text_color='#9d8ead').pack(side='left')
+            ct.CTkLabel(tools,text=f'{loader_type.title()} {version} • ↓ {item["downloads"]:,}',text_color='#8ead9d').pack(side='left')
             ct.CTkButton(tools,text='Установить сборку',width=180,command=lambda x=item,v=version,k=loader_type:self.work(lambda:self.install_pack(x,v,k))).pack(side='right')
     def install_pack(self,project,version,loader_type='fabric'):
         item=packs.install(ROOT,project,version,lambda text,value:self.events.put(('progress',(text,value))),loader_type)
@@ -488,11 +491,11 @@ class Launcher(ct.CTk):
         folder=ROOT/'instances'/instance['id']/'mods'
         self.work(lambda:self.download_mod(mid,version,set(),target_folder=folder,loader_type=loader_type))
     def profiles(self):
-        p=self.pages['Аккаунты']; self.label(p,'Твоя личность',36); self.label(p,'Офлайн-аккаунт содержит только ник. Он подходит для одиночной игры\nи серверов, разрешающих офлайн-подключения.',16,'#9eafbc')
+        p=self.pages['Аккаунты']; self.label(p,'Твоя личность',36); self.label(p,'Офлайн-аккаунт содержит только ник. Он подходит для одиночной игры\nи серверов, разрешающих офлайн-подключения.',16,'#afbc9e')
         self.name_entry=ct.CTkEntry(p,placeholder_text='Ник игрока',width=340,height=45); self.name_entry.pack(anchor='w',pady=15)
         self.profile_status=self.label(p,'3–16 символов: латинские буквы, цифры, _',14)
         ct.CTkButton(p,text='Создать аккаунт',command=self.add_account,height=44).pack(anchor='w')
-        self.profile_list=ct.CTkScrollableFrame(p,fg_color='#19191f'); self.profile_list.pack(fill='both',expand=True,pady=25); self.render_profiles()
+        self.profile_list=ct.CTkScrollableFrame(p,fg_color='#191f19'); self.profile_list.pack(fill='both',expand=True,pady=25); self.render_profiles()
     def add_account(self):
         n=self.name_entry.get().strip()
         if not re.fullmatch(r'[A-Za-z0-9_]{3,16}',n): self.profile_status.configure(text='Неверный ник: нужно 3–16 латинских букв, цифр или _.'); return
@@ -501,22 +504,22 @@ class Launcher(ct.CTk):
     def render_profiles(self):
         for w in self.profile_list.winfo_children():w.destroy()
         for n in self.accounts:
-            ct.CTkButton(self.profile_list,text='◈  '+n+'    •    OFFLINE',height=50,fg_color='#30263f',command=lambda x=n:self.select_account(x)).pack(fill='x',pady=6)
+            ct.CTkButton(self.profile_list,text='◈  '+n+'    •    OFFLINE',height=50,fg_color='#263f30',command=lambda x=n:self.select_account(x)).pack(fill='x',pady=6)
     def select_account(self,n): self.nick.set(n); self.save(); self.sidebar_nick.configure(text=n); self.profile_status.configure(text='Выбран: '+n)
     def settings(self):
         p=self.pages['Настройки']; self.label(p,'Настрой под себя',36)
         self.label(p,'Путь к java.exe • оставьте пустым для автоматического выбора'); self.java_entry=ct.CTkEntry(p,width=650); self.java_entry.insert(0,self.cfg.get('java','')); self.java_entry.pack(anchor='w')
-        self.label(p,'1.16.5 → Java 8 • 1.20.1 → Java 17 • 1.21.x → Java 21 • 26.x → Java 25',12,'#9eafbc')
+        self.label(p,'1.16.5 → Java 8 • 1.20.1 → Java 17 • 1.21.x → Java 21 • 26.x → Java 25',12,'#afbc9e')
         self.label(p,'Память игры, ГБ'); self.ram=ct.CTkOptionMenu(p,values=['2','3','4','6','8','12','16']); self.ram.set(str(self.cfg.get('ram',4))); self.ram.pack(anchor='w')
         self.label(p,'Магазин модов • Modrinth',22)
-        self.label(p,'Поиск и скачивание доступны без аккаунта и API-ключа.',14,'#9eafbc')
-        self.label(p,'Описания автоматически переводятся через Google Translate.\nСервис получает только публичный текст описания мода.',12,'#9eafbc')
+        self.label(p,'Поиск и скачивание доступны без аккаунта и API-ключа.',14,'#afbc9e')
+        self.label(p,'Описания автоматически переводятся через Google Translate.\nСервис получает только публичный текст описания мода.',12,'#afbc9e')
         ct.CTkButton(p,text='Сохранить настройки',height=44,command=self.save_settings).pack(anchor='w',pady=20)
         self.settings_status=self.label(p,'Minecraft — Mojang • Fabric — FabricMC • Моды — Modrinth',14)
         self.available_update=None
         self.update_button=ct.CTkButton(p,text='Проверить обновления',height=40,command=self.update_launcher)
         self.update_button.pack(anchor='w',pady=(14,4))
-        self.update_status=self.label(p,'TUL4N '+updater.VERSION,12,'#9eafbc')
+        self.update_status=self.label(p,'TUL4N '+updater.VERSION,12,'#afbc9e')
     def update_launcher(self):
         if not getattr(sys,'frozen',False):
             self.update_status.configure(text='Обновления доступны в установленной .exe версии'); return
@@ -538,15 +541,15 @@ class Launcher(ct.CTk):
     def api(self,path,params=None):
         return packs.api(path,params)
     def mods(self):
-        p=self.pages['Моды']; self.label(p,'Собери свой Minecraft',36); self.label(p,'MODRINTH • версия и загрузчик выбраны на Главной',14,'#ac8bff')
+        p=self.pages['Моды']; self.label(p,'Собери свой Minecraft',36); self.label(p,'MODRINTH • версия и загрузчик выбраны на Главной',14,'#8bffac')
         self.search=ct.CTkEntry(p,placeholder_text='Название мода…',width=500,height=42); self.search.pack(anchor='w',pady=10)
         self.search_button=ct.CTkButton(p,text='Найти моды',command=self.start_search); self.search_button.pack(anchor='w')
         self.search.bind('<Return>',lambda _:self.start_search())
         self.search.bind('<KeyRelease>',self.queue_search)
-        self.mod_target=ct.CTkLabel(p,text='',text_color='#b8a0e5'); self.mod_target.pack(anchor='w')
+        self.mod_target=ct.CTkLabel(p,text='',text_color='#a0e5b8'); self.mod_target.pack(anchor='w')
         self.modstatus=self.label(p,'Введите название или нажмите «Найти моды», чтобы увидеть популярные.',14)
-        self.search_progress=ct.CTkProgressBar(p,height=4,mode='indeterminate',progress_color='#a487ff'); self.search_progress.pack(fill='x',pady=(0,8)); self.search_progress.set(0)
-        self.modlist=ct.CTkScrollableFrame(p,fg_color='#19191f'); self.modlist.pack(fill='both',expand=True)
+        self.search_progress=ct.CTkProgressBar(p,height=4,mode='indeterminate',progress_color='#87ffa4'); self.search_progress.pack(fill='x',pady=(0,8)); self.search_progress.set(0)
+        self.modlist=ct.CTkScrollableFrame(p,fg_color='#191f19'); self.modlist.pack(fill='both',expand=True)
     def queue_search(self,event=None):
         if event and event.keysym in ('Return','Tab','Shift_L','Shift_R','Control_L','Control_R','Left','Right','Up','Down','Escape'):return
         if self.search_timer:self.after_cancel(self.search_timer)
@@ -583,21 +586,21 @@ class Launcher(ct.CTk):
         if self.more_mods:self.more_mods.destroy();self.more_mods=None
         batch=self.remaining_mods[:6];self.remaining_mods=self.remaining_mods[6:]
         for m in batch:
-            f=ct.CTkFrame(self.modlist,fg_color='#25232e'); f.pack(fill='x',pady=7,padx=6)
+            f=ct.CTkFrame(self.modlist,fg_color='#232e25'); f.pack(fill='x',pady=7,padx=6)
             top=ct.CTkFrame(f,fg_color='transparent'); top.pack(fill='x',padx=16,pady=(16,8))
-            icon=ct.CTkLabel(top,text='◈',width=72,height=72,font=('Segoe UI',30),text_color='#b59aff',fg_color='#322b43',corner_radius=12); icon.pack(side='left',anchor='n',padx=(0,16))
+            icon=ct.CTkLabel(top,text='◈',width=72,height=72,font=('Segoe UI',30),text_color='#9affb5',fg_color='#2b4332',corner_radius=12); icon.pack(side='left',anchor='n',padx=(0,16))
             copy=ct.CTkFrame(top,fg_color='transparent'); copy.pack(side='left',fill='x',expand=True)
             ct.CTkLabel(copy,text=m['title'],font=('Segoe UI',19,'bold')).pack(anchor='w')
-            ct.CTkLabel(copy,text=f'Автор: {m.get("author", "—")}   •   ↓ {m.get("downloads",0):,}'.replace(',',' '),font=('Segoe UI',11),text_color='#92899f').pack(anchor='w',pady=(0,5))
-            summary=ct.CTkLabel(copy,text=m['description'],wraplength=610,justify='left',text_color='#c4bed1',font=('Segoe UI',13)); summary.pack(anchor='w')
+            ct.CTkLabel(copy,text=f'Автор: {m.get("author", "—")}   •   ↓ {m.get("downloads",0):,}'.replace(',',' '),font=('Segoe UI',11),text_color='#899f92').pack(anchor='w',pady=(0,5))
+            summary=ct.CTkLabel(copy,text=m['description'],wraplength=610,justify='left',text_color='#bed1c4',font=('Segoe UI',13)); summary.pack(anchor='w')
             bottom=ct.CTkFrame(f,fg_color='transparent'); bottom.pack(fill='x',padx=16,pady=(4,14))
-            note=ct.CTkLabel(bottom,text='Загружаем логотип и перевод…',text_color='#92839f',font=('Segoe UI',10)); note.pack(side='left')
+            note=ct.CTkLabel(bottom,text='Загружаем логотип и перевод…',text_color='#839f92',font=('Segoe UI',10)); note.pack(side='left')
             ct.CTkButton(bottom,text=f'Скачать • {version} ↓',width=165,height=36,command=lambda mid=m['project_id'],v=version,k=loader_type:self.start_mod_download(mid,v,k)).pack(side='right',padx=(8,0))
-            ct.CTkButton(bottom,text='Подробнее',width=110,height=36,fg_color='#3b314e',command=lambda mod=m,v=version,k=loader_type:self.open_details(mod,v,k)).pack(side='right')
+            ct.CTkButton(bottom,text='Подробнее',width=110,height=36,fg_color='#314e3b',command=lambda mod=m,v=version,k=loader_type:self.open_details(mod,v,k)).pack(side='right')
             self.mod_widgets[m['project_id']]=(icon,summary,note)
             self.media_pool.submit(self.load_card_media,m,generation)
         if self.remaining_mods:
-            self.more_mods=ct.CTkButton(self.modlist,text=f'Показать ещё • осталось {len(self.remaining_mods)}',height=40,fg_color='#393045',command=self.append_mod_cards)
+            self.more_mods=ct.CTkButton(self.modlist,text=f'Показать ещё • осталось {len(self.remaining_mods)}',height=40,fg_color='#304539',command=self.append_mod_cards)
             self.more_mods.pack(fill='x',padx=8,pady=12)
     def load_card_media(self,mod,generation):
         if generation!=self.search_generation: return
@@ -616,17 +619,17 @@ class Launcher(ct.CTk):
         except Exception: pass
         self.events.put(('card_media',(generation,mod['project_id'],picture,description,translated)))
     def open_details(self,mod,version,loader_type='fabric'):
-        window=ct.CTkToplevel(self); window.title(mod['title']+' • Modrinth'); window.geometry('820x700'); window.configure(fg_color='#19171f')
+        window=ct.CTkToplevel(self); window.title(mod['title']+' • Modrinth'); window.geometry('820x700'); window.configure(fg_color='#171f19')
         ct.CTkLabel(window,text=mod['title'],font=('Segoe UI',27,'bold'),wraplength=760).pack(anchor='w',padx=24,pady=(20,4))
-        note=ct.CTkLabel(window,text='Загружаем подробное описание и перевод…',text_color='#af94e8',wraplength=760); note.pack(anchor='w',padx=24,pady=(0,10))
-        textbox=ct.CTkTextbox(window,wrap='word',font=('Segoe UI',14),fg_color='#24212c'); textbox.pack(fill='both',expand=True,padx=24,pady=8); textbox.insert('1.0','Загрузка…'); textbox.configure(state='disabled')
+        note=ct.CTkLabel(window,text='Загружаем подробное описание и перевод…',text_color='#94e8af',wraplength=760); note.pack(anchor='w',padx=24,pady=(0,10))
+        textbox=ct.CTkTextbox(window,wrap='word',font=('Segoe UI',14),fg_color='#212c24'); textbox.pack(fill='both',expand=True,padx=24,pady=8); textbox.insert('1.0','Загрузка…'); textbox.configure(state='disabled')
         controls=ct.CTkFrame(window,fg_color='transparent'); controls.pack(fill='x',padx=24,pady=18)
         def language(original):
             value=getattr(window,'original_description' if original else 'russian_description','')
             if value:
                 textbox.configure(state='normal'); textbox.delete('1.0','end'); textbox.insert('1.0',value); textbox.configure(state='disabled')
         ct.CTkButton(controls,text='Русский',width=100,command=lambda:language(False)).pack(side='left',padx=(0,8))
-        ct.CTkButton(controls,text='Оригинал',width=100,fg_color='#3b314e',command=lambda:language(True)).pack(side='left')
+        ct.CTkButton(controls,text='Оригинал',width=100,fg_color='#314e3b',command=lambda:language(True)).pack(side='left')
         ct.CTkButton(controls,text=f'Скачать • {version}',width=175,command=lambda:self.start_mod_download(mod['project_id'],version,loader_type)).pack(side='right')
         threading.Thread(target=self.load_details,args=(mod,window,textbox,note),daemon=True).start()
     def load_details(self,mod,window,textbox,note):

@@ -8,7 +8,27 @@ class AnimatedButton(ct.CTkButton):
     def __init__(self, *args, **kwargs):
         self._fade_job = None
         self._fade_color = None
+        self._lift = 0
+        self._lift_padding = None
         super().__init__(*args, **kwargs)
+
+    def pack(self, **kwargs):
+        padding = kwargs.get('pady', 0)
+        if isinstance(padding, (tuple, list)):
+            top, bottom = padding
+        else:
+            top = bottom = padding
+        self._lift_padding = (float(top)+3, float(bottom)+3)
+        kwargs['pady'] = self._lift_padding
+        return super().pack(**kwargs)
+
+    def _paint_lift(self, offset):
+        self._lift = offset
+        if self._lift_padding is not None and self.winfo_manager() == 'pack':
+            top, bottom = self._lift_padding
+            # Constant total padding reserves the movement; siblings stay still.
+            tk.Pack.pack_configure(self, pady=(round(self._apply_widget_scaling(top+offset)),
+                                              round(self._apply_widget_scaling(bottom-offset))))
 
     def _cancel_fade(self):
         if self._fade_job is not None:
@@ -31,6 +51,8 @@ class AnimatedButton(ct.CTkButton):
         rgb_start = self.winfo_rgb(start)
         rgb_target = self.winfo_rgb(target)
         started = time.monotonic()
+        lift_start = self._lift
+        lift_target = -3 if hovered else 0
 
         def frame():
             self._fade_job = None
@@ -43,6 +65,7 @@ class AnimatedButton(ct.CTkButton):
                 color = '#' + ''.join(f'{round((a + (b-a)*eased)/257):02x}'
                                       for a, b in zip(rgb_start, rgb_target))
                 self._paint(color)
+                self._paint_lift(lift_start+(lift_target-lift_start)*eased)
                 if progress < 1:
                     self._fade_job = self.after(16, frame)
             except tk.TclError:
@@ -61,6 +84,7 @@ class AnimatedButton(ct.CTkButton):
         if any(key in kwargs for key in ('state', 'fg_color', 'hover_color')):
             self._cancel_fade()
             self._fade_color = None
+            self._paint_lift(0)
         return super().configure(require_redraw=require_redraw, **kwargs)
 
     def destroy(self):
