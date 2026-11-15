@@ -144,6 +144,8 @@ class Launcher(ct.CTk):
         self.animation_job=self.after(60,self.animate_hero)
         self.bind('<Configure>',self.on_window_resize,add='+')
         self.after(100,self.poll)
+        self.update_checking=False
+        self.update_timer=self.after(10000,self.check_updates_automatically)
 
     def label(self,p,text,size=16,color='#e6efdc'):
         w=ct.CTkLabel(p,text=text,font=('Segoe UI',size,'bold' if size>20 else 'normal'),text_color=color,wraplength=720,justify='left'); w.pack(anchor='w',pady=10); return w
@@ -205,7 +207,7 @@ class Launcher(ct.CTk):
         self.show('Моды'); self.search.focus_set(); self.search.select_range(0,'end')
     def close(self):
         self.closing=True
-        for job in (self.nav_animation,self.hero_resize_job,self.content_resize_job,getattr(self,'animation_job',None),self.search_timer):
+        for job in (self.nav_animation,self.hero_resize_job,self.content_resize_job,getattr(self,'animation_job',None),getattr(self,'update_timer',None),self.search_timer):
             if job:
                 try:self.after_cancel(job)
                 except tk.TclError:pass
@@ -301,14 +303,18 @@ class Launcher(ct.CTk):
             if kind=='status': self.status.configure(text=data); self.modstatus.configure(text=data); self.pack_status.configure(text=data)
             elif kind=='update_status': self.update_status.configure(text=data)
             elif kind=='update_checked':
+                self.update_checking=False
                 self.available_update=data
                 self.update_button.configure(state='normal',text='Обновить и перезапустить' if data else 'Проверить обновления')
                 self.update_status.configure(text=f'Доступна версия {data[0]}' if data else 'Установлена последняя версия')
+                if data:self.status.configure(text=f'Доступен TUL4N {data[0]} — обновление в Настройках')
             elif kind=='update_error':
+                self.update_checking=False
                 self.update_button.configure(state='normal',text='Повторить проверку')
                 self.available_update=None
                 self.update_status.configure(text='Ошибка обновления: '+str(data)[:180])
             elif kind=='update_ready':
+                self.update_checking=False
                 if self.busy or self.game_running:
                     self.update_button.configure(state='normal',text='Обновить и перезапустить')
                     self.update_status.configure(text='Завершите игру или установку, затем повторите обновление')
@@ -520,12 +526,20 @@ class Launcher(ct.CTk):
         self.update_button=ct.CTkButton(p,text='Проверить обновления',height=40,command=self.update_launcher)
         self.update_button.pack(anchor='w',pady=(14,4))
         self.update_status=self.label(p,'TUL4N '+updater.VERSION,12,'#afbc9e')
+        self.label(p,'Автопроверка при запуске и каждые 5 часов',12,'#829889')
+    def check_updates_automatically(self):
+        if self.closing:return
+        self.update_timer=self.after(5*60*60*1000,self.check_updates_automatically)
+        if not self.available_update and not self.update_checking and not self.busy and not self.game_running:
+            self.update_launcher()
     def update_launcher(self):
+        if self.update_checking:return
         if not getattr(sys,'frozen',False):
             self.update_status.configure(text='Обновления доступны в установленной .exe версии'); return
         if self.busy or self.game_running:
             self.update_status.configure(text='Сначала завершите игру или установку'); return
         release=self.available_update
+        self.update_checking=True
         self.update_button.configure(state='disabled')
         self.update_status.configure(text='Скачиваем обновление…' if release else 'Проверяем обновления…')
         def job():
