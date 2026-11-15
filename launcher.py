@@ -107,6 +107,8 @@ class Launcher(ct.CTk):
         self.nick = ct.StringVar(value=self.cfg.get('nick', self.accounts[0] if self.accounts else ''))
         self.version = ct.StringVar(value=self.cfg.get('version', '1.21.11'))
         self.loader_type=ct.StringVar(value='Fabric'); self.search_timer=None
+        self.loader_release=ct.StringVar(value='Проверка…')
+        self.loader_catalog={}; self.compat_requests={}; self.metadata_loading=True
         self.events = queue.Queue(); self.busy = False
         self.game_running=False; self.searching=False; self.search_id=0
         self.current_page=None;self.closing=False;self.resizing_until=0
@@ -114,7 +116,7 @@ class Launcher(ct.CTk):
         self.content_resize_job=None;self.content_size=(940,665)
         self.instances=packs.list_instances(ROOT)
         self.active_id=self.cfg.get('active_instance',self.version.get())
-        if not any(x['id']==self.active_id for x in self.instances):self.active_id=self.version.get()
+        if not any(x['id']==self.active_id for x in self.instances):self.active_id='vanilla-'+self.version.get()
         self.instance_name=ct.StringVar(value='')
         self.media_pool=MediaWorkers(max_workers=4)
         self.search_generation=0; self.mod_widgets={}
@@ -147,6 +149,7 @@ class Launcher(ct.CTk):
         self.after(100,self.poll)
         self.update_checking=False
         self.update_timer=self.after(10000,self.check_updates_automatically)
+        self.after(150,self.refresh_version_catalog)
 
     def label(self,p,text,size=16,color='#e6efdc'):
         w=ct.CTkLabel(p,text=text,font=('Segoe UI',size,'bold' if size>20 else 'normal'),text_color=color,wraplength=720,justify='left'); w.pack(anchor='w',pady=10); return w
@@ -163,6 +166,9 @@ class Launcher(ct.CTk):
         if self.nav_animation:self.after_cancel(self.nav_animation);self.nav_animation=None
         self.after_idle(lambda:self.start_navigation_animation(n))
         if n=='Моды' and not getattr(self,'catalog_loaded',False) and not self.searching:self.after(80,self.start_search)
+        if n=='Сборки':
+            self.queue_compatibility(self.build_version.get(),'build')
+            self.queue_compatibility(self.pack_version.get(),'pack')
     def start_navigation_animation(self,name):
         if self.closing or name!=self.current_page:return
         button=self.nav[name]
@@ -230,8 +236,9 @@ class Launcher(ct.CTk):
         ct.CTkLabel(copy,text='Твой мир. Твои правила.',font=('Segoe UI',14),text_color='#a0b9ab').pack(anchor='w',pady=(7,17))
         actions=ct.CTkFrame(copy,fg_color='transparent'); actions.pack(anchor='w')
         self.play=ct.CTkButton(actions,text='▷  Играть',width=135,height=46,corner_radius=12,border_width=1,border_color='#44bd80',font=('Segoe UI',17,'bold'),command=self.begin_launch); self.play.pack(side='left',padx=(0,10))
-        ct.CTkOptionMenu(actions,values=VERSIONS,variable=self.version,command=self.choose_base,width=118,height=46,fg_color='#212e24',button_color='#212e24',button_hover_color='#304437',font=('Segoe UI',14)).pack(side='left',padx=(0,8))
-        ct.CTkOptionMenu(actions,values=loaders.LOADERS,variable=self.loader_type,command=lambda _:self.choose_base(self.version.get()),width=120,height=46,fg_color='#212e24',button_color='#212e24',button_hover_color='#304437',font=('Segoe UI',14)).pack(side='left')
+        self.minecraft_menu=ct.CTkOptionMenu(actions,values=VERSIONS,variable=self.version,command=self.choose_base,width=118,height=46,fg_color='#212e24',button_color='#212e24',button_hover_color='#304437',font=('Segoe UI',14));self.minecraft_menu.pack(side='left',padx=(0,8))
+        self.loader_menu=ct.CTkOptionMenu(actions,values=['Vanilla'],variable=self.loader_type,command=self.choose_loader,width=120,height=46,fg_color='#212e24',button_color='#212e24',button_hover_color='#304437',font=('Segoe UI',14));self.loader_menu.pack(side='left')
+        self.loader_version_menu=ct.CTkOptionMenu(copy,values=['Проверка…'],variable=self.loader_release,command=self.choose_loader_release,width=240,height=28,state='disabled');self.loader_version_menu.pack(anchor='w',pady=(6,0))
         ct.CTkLabel(copy,text='MINECRAFT JAVA EDITION',font=('Segoe UI',10,'bold'),text_color='#95b4a0').pack(anchor='w',pady=(10,0))
         self.status=ct.CTkLabel(p,text='Готов к новому приключению',font=('Segoe UI',12),text_color='#8ba592',wraplength=800,anchor='w',justify='left'); self.status.pack(fill='x',pady=(10,14))
         self.instance_menu=ct.CTkOptionMenu(p,values=['Загрузка сборок…'],variable=self.instance_name,command=self.choose_instance,height=34); self.instance_menu.pack(fill='x',pady=(0,10))
@@ -303,6 +310,14 @@ class Launcher(ct.CTk):
         while not self.events.empty() and time.perf_counter()<deadline:
             kind,data=self.events.get()
             if kind=='status': self.status.configure(text=data); self.modstatus.configure(text=data); self.pack_status.configure(text=data)
+            elif kind=='official_versions':
+                versions,error=data
+                if versions:
+                    VERSIONS[:]=versions
+                    for menu in (self.minecraft_menu,self.build_version,self.pack_version):menu.configure(values=versions)
+                if error:self.status.configure(text='Каталог Minecraft недоступен: '+error)
+                self.queue_compatibility(self.version.get())
+            elif kind=='compatibility': self.apply_compatibility(*data)
             elif kind=='update_status': self.update_status.configure(text=data)
             elif kind=='update_checked':
                 self.update_checking=False
@@ -363,22 +378,24 @@ class Launcher(ct.CTk):
                 self.busy=False; self.play.configure(state='disabled' if self.game_running else 'normal',text='Игра запущена' if self.game_running else '▷  Играть')
                 self.operation_progress.stop(); self.operation_progress.configure(mode='determinate'); self.operation_progress.set(0)
     def begin_launch(self):
+        if self.metadata_loading:
+            self.status.configure(text='Дождитесь проверки совместимости загрузчиков');return
         self.launch_context=(self.nick.get(),dict(self.active_instance()))
+        if self.loader_release.get()!='Проверка…':self.launch_context[1]['loader']=self.loader_release.get()
         self.work(self.launch)
     def launch(self):
         nick,instance=self.launch_context; version=instance['version']
         if nick not in self.accounts: raise ValueError('Создайте и выберите аккаунт во вкладке «Аккаунты».')
         game=ROOT/'instances'/instance['id']; game.mkdir(parents=True,exist_ok=True)
         kind=instance.get('loader_type','fabric')
-        loaders.available(kind,version)
-        java=loaders.java_for(version,self.cfg.get('java','').strip())
         callback={'setStatus':lambda s:self.events.put(('status',s))}
+        java=loaders.java_for(version,self.cfg.get('java','').strip(),runtime_root=ROOT,callback=callback,game=game)
         self.events.put(('status','Проверяем и устанавливаем Minecraft + '+kind.title()+'…'))
         installed=loaders.install(kind,version,game,java,callback,instance.get('loader'))
         digest=bytearray(hashlib.md5(('OfflinePlayer:'+nick).encode()).digest()); digest[6]=(digest[6]&15)|48; digest[8]=(digest[8]&63)|128
         options={'username':nick,'uuid':str(uuid.UUID(bytes=bytes(digest))),'token':'0','executablePath':java,'jvmArguments':[f'-Xmx{self.cfg.get("ram",4)}G'],'gameDirectory':str(game),'launcherName':'TUL4N'}
         cmd=mc.command.get_minecraft_command(installed,str(game),options)
-        self.events.put(('status','Minecraft запущен. Журнал: instances/'+version+'/game.log'))
+        self.events.put(('status','Minecraft запущен. Журнал: instances/'+instance['id']+'/game.log'))
         log=(game/'game.log').open('w',encoding='utf-8')
         try:process=subprocess.Popen(cmd,cwd=game,stdout=log,stderr=subprocess.STDOUT,creationflags=0x08000000)
         except Exception:log.close(); raise
@@ -395,6 +412,8 @@ class Launcher(ct.CTk):
     def refresh_instances(self):
         self.instances=packs.list_instances(ROOT)
         selected=self.active_instance(); self.version.set(selected['version']); self.loader_type.set(next(x for x in loaders.LOADERS if x.lower()==selected.get('loader_type','fabric')))
+        releases=self.loader_catalog.get(selected['version'],{}).get(selected.get('loader_type','fabric'),[])
+        self.loader_release.set(selected.get('loader') or (releases[0] if releases else 'Проверка…'))
         self.instance_menu.configure(values=[self.instance_label(x) for x in self.instances]); self.instance_name.set(self.instance_label(selected))
         if hasattr(self,'library'):self.render_library()
         if hasattr(self,'mod_target'):self.mod_target.configure(text='Установка модов в: '+selected['name']+' • '+selected.get('loader_type','fabric').title()+' '+selected['version'])
@@ -402,13 +421,70 @@ class Launcher(ct.CTk):
         for instance in self.instances:
             if self.instance_label(instance)==label:self.active_id=instance['id']; break
         self.refresh_instances(); self.save(); self.catalog_loaded=False
+        self.queue_compatibility(self.version.get())
     def choose_base(self,version):
-        kind=self.loader_type.get().lower()
-        self.active_id=version if kind=='fabric' else kind+'-'+version
-        self.refresh_instances(); self.save(); self.catalog_loaded=False
+        self.version.set(version);self.queue_compatibility(version)
+    def refresh_version_catalog(self):
+        def job():
+            try:self.events.put(('official_versions',(loaders.release_versions(),'')))
+            except Exception as e:self.events.put(('official_versions',([],str(e))))
+        threading.Thread(target=job,daemon=True).start()
+    def queue_compatibility(self,version,scope='home'):
+        token=self.compat_requests.get(scope,0)+1;self.compat_requests[scope]=token
+        if scope=='home':
+            selected=self.active_instance()
+            local=selected['version']==version and (ROOT/'instances'/selected['id']/'.chunk-loader-ready.json').exists()
+            self.metadata_loading=not local
+            self.play.configure(state='disabled' if self.metadata_loading or self.busy or self.game_running else 'normal')
+            self.loader_menu.configure(state='disabled');self.loader_version_menu.configure(state='disabled')
+        else:
+            getattr(self,scope+'_loader').configure(state='disabled')
+        def job():
+            try:catalog,errors=loaders.compatible(version)
+            except Exception as e:catalog,errors={},[str(e)]
+            self.events.put(('compatibility',(scope,token,version,catalog,errors)))
+        threading.Thread(target=job,daemon=True).start()
+    def apply_compatibility(self,scope,token,version,catalog,errors):
+        if self.compat_requests.get(scope)!=token:return
+        self.loader_catalog[version]=catalog
+        if scope!='home':
+            if getattr(self,scope+'_version').get()!=version:return
+            options=[x for x in loaders.LOADERS if x.lower() in catalog and (scope!='pack' or x!='Vanilla')]
+            menu=getattr(self,scope+'_loader');old=menu.get()
+            menu.configure(values=options or ['Нет совместимых'],state='normal' if options else 'disabled')
+            menu.set(old if old in options else (options[0] if options else 'Нет совместимых'))
+            if scope=='build':self.choose_build_loader(menu.get())
+            return
+        if self.version.get()!=version:return
+        selected=self.active_instance();kind=self.loader_type.get().lower()
+        # A completed local installation remains launchable when a metadata server is offline.
+        if errors and selected['version']==version and (ROOT/'instances'/selected['id']/'.chunk-loader-ready.json').exists():
+            catalog.setdefault(selected['loader_type'],[selected.get('loader') or selected['version']])
+        if not catalog:
+            self.status.configure(text='Не удалось проверить версию: '+'; '.join(errors));return
+        options=[x for x in loaders.LOADERS if x.lower() in catalog]
+        if kind not in catalog:kind='vanilla'
+        self.loader_menu.configure(values=options,state='normal');self.loader_type.set(next(x for x in options if x.lower()==kind))
+        releases=catalog[kind]
+        self.loader_version_menu.configure(values=releases,state='disabled' if kind=='vanilla' else 'normal')
+        self.loader_release.set(selected.get('loader') if selected['version']==version and selected.get('loader_type')==kind and selected.get('loader') in releases else releases[0])
+        if selected['version']!=version or selected.get('loader_type')!=kind:
+            self.active_id=packs.select_base(ROOT,version,kind)['id'];self.refresh_instances()
+        self.metadata_loading=False;self.play.configure(state='disabled' if self.busy or self.game_running else 'normal')
+        self.status.configure(text='Метаданные недоступны для части загрузчиков: '+'; '.join(errors) if errors else 'Выбрано: '+self.loader_type.get()+' '+version)
+        self.catalog_loaded=False;self.save()
+    def choose_loader(self,value):
+        kind=value.lower();version=self.version.get();releases=self.loader_catalog.get(version,{}).get(kind,[])
+        if not releases:return
+        self.loader_version_menu.configure(values=releases,state='disabled' if kind=='vanilla' else 'normal');self.loader_release.set(releases[0])
+        self.active_id=packs.select_base(ROOT,version,kind)['id'];self.refresh_instances();self.save();self.catalog_loaded=False
+    def choose_loader_release(self,value):
+        self.active_id=packs.select_base(ROOT,self.version.get(),self.loader_type.get().lower(),value)['id']
+        self.refresh_instances();self.save();self.catalog_loaded=False
     def activate_instance(self,instance):
         self.active_id=instance['id']; self.refresh_instances(); self.save(); self.catalog_loaded=False; self.show('Главная')
         self.status.configure(text='Выбрана сборка: '+instance['name'])
+        self.queue_compatibility(self.version.get())
     def builds(self):
         p=self.pages['Сборки']; self.label(p,'Твои сборки',32)
         self.label(p,'Отдельные моды, настройки и миры для каждого приключения.',13,'#9bb8a7')
@@ -416,21 +492,28 @@ class Launcher(ct.CTk):
         own=tabs.add('Мои сборки'); catalog=tabs.add('Modrinth')
         form=ct.CTkFrame(own,fg_color='transparent'); form.pack(fill='x',pady=8)
         self.build_name=ct.CTkEntry(form,placeholder_text='Название новой сборки',width=270,height=38); self.build_name.pack(side='left',padx=(4,10))
-        self.build_version=ct.CTkOptionMenu(form,values=VERSIONS,width=130,height=38); self.build_version.set(self.version.get()); self.build_version.pack(side='left',padx=(0,10))
-        self.build_loader=ct.CTkOptionMenu(form,values=loaders.LOADERS,width=125,height=38); self.build_loader.pack(side='left',padx=(0,10))
+        self.build_version=ct.CTkOptionMenu(form,values=VERSIONS,width=110,height=38,command=lambda v:self.queue_compatibility(v,'build')); self.build_version.set(self.version.get()); self.build_version.pack(side='left',padx=(0,10))
+        self.build_loader=ct.CTkOptionMenu(form,values=['Vanilla'],width=110,height=38,command=self.choose_build_loader); self.build_loader.pack(side='left',padx=(0,10))
+        self.build_loader_release=ct.CTkOptionMenu(form,values=['Проверка…'],width=120,height=38,state='disabled');self.build_loader_release.pack(side='left',padx=(0,10))
         ct.CTkButton(form,text='＋ Создать',width=125,height=38,command=self.create_build).pack(side='left')
         self.library=ct.CTkScrollableFrame(own,fg_color='transparent'); self.library.pack(fill='both',expand=True,pady=8)
         self.pack_query=ct.CTkEntry(catalog,placeholder_text='Название сборки…',height=38); self.pack_query.pack(fill='x',pady=8)
         tools=ct.CTkFrame(catalog,fg_color='transparent'); tools.pack(fill='x')
-        self.pack_version=ct.CTkOptionMenu(tools,values=VERSIONS,width=145); self.pack_version.set(self.version.get()); self.pack_version.pack(side='left',padx=(0,10))
-        self.pack_loader=ct.CTkOptionMenu(tools,values=loaders.LOADERS,width=135); self.pack_loader.pack(side='left',padx=(0,10))
+        self.pack_version=ct.CTkOptionMenu(tools,values=VERSIONS,width=145,command=lambda v:self.queue_compatibility(v,'pack')); self.pack_version.set(self.version.get()); self.pack_version.pack(side='left',padx=(0,10))
+        self.pack_loader=ct.CTkOptionMenu(tools,values=['Проверка…'],width=135,state='disabled'); self.pack_loader.pack(side='left',padx=(0,10))
         self.pack_search_button=ct.CTkButton(tools,text='Найти сборки',command=self.search_packs); self.pack_search_button.pack(side='left')
         self.pack_query.bind('<Return>',lambda _:self.search_packs())
         self.pack_results=ct.CTkScrollableFrame(catalog,fg_color='transparent'); self.pack_results.pack(fill='both',expand=True,pady=12)
         self.pack_status=ct.CTkLabel(p,text='Выберите готовую сборку Modrinth или создайте свою.',wraplength=850,text_color='#a4d0b6'); self.pack_status.pack(fill='x',pady=8)
+    def choose_build_loader(self,value):
+        versions=self.loader_catalog.get(self.build_version.get(),{}).get(value.lower(),[])
+        self.build_loader_release.configure(values=versions or ['Проверка…'],state='normal' if versions and value!='Vanilla' else 'disabled')
+        self.build_loader_release.set(versions[0] if versions else 'Проверка…')
     def create_build(self):
         try:
-            item=packs.new_instance(ROOT,self.build_name.get(),self.build_version.get(),loader_type=self.build_loader.get().lower())
+            versions=self.loader_catalog.get(self.build_version.get(),{}).get(self.build_loader.get().lower(),[])
+            if self.build_loader_release.get() not in versions:raise ValueError('Дождитесь проверки совместимости')
+            item=packs.new_instance(ROOT,self.build_name.get(),self.build_version.get(),loader=self.build_loader_release.get(),loader_type=self.build_loader.get().lower())
             self.active_id=item['id']; self.refresh_instances(); self.save(); self.build_name.delete(0,'end')
             self.pack_status.configure(text='Создана и выбрана: '+item['name']+'. Добавляйте моды во вкладке «Моды».')
         except Exception as e:self.pack_status.configure(text=str(e))
@@ -473,6 +556,8 @@ class Launcher(ct.CTk):
     def search_packs(self):
         query,version=self.pack_query.get().strip(),self.pack_version.get()
         kind=self.pack_loader.get().lower()
+        if kind not in self.loader_catalog.get(version,{}) or kind=='vanilla':
+            self.pack_status.configure(text='Выберите совместимый загрузчик после проверки метаданных');return
         self.pack_search_button.configure(state='disabled',text='Поиск…'); self.pack_status.configure(text='Ищем сборки '+kind.title()+' '+version+' на Modrinth…')
         def job():
             try:
@@ -493,6 +578,8 @@ class Launcher(ct.CTk):
         item=packs.install(ROOT,project,version,lambda text,value:self.events.put(('progress',(text,value))),loader_type)
         self.events.put(('instance_added',item))
     def start_mod_download(self,mid,version,loader_type='fabric'):
+        if loader_type=='vanilla':
+            self.modstatus.configure(text='Для модов выберите Fabric, Forge или NeoForge');return
         instance=dict(self.active_instance())
         if instance['version']!=version or instance.get('loader_type','fabric')!=loader_type:
             self.modstatus.configure(text='Версия или загрузчик сборки изменились. Повторите поиск.'); return
@@ -576,6 +663,10 @@ class Launcher(ct.CTk):
         if self.search_timer:self.after_cancel(self.search_timer);self.search_timer=None
         query,version=self.search.get().strip(),self.active_instance()['version']
         kind=self.active_instance().get('loader_type','fabric')
+        if kind=='vanilla':
+            self.search_id+=1;self.searching=False
+            self.search_button.configure(state='normal',text='Найти моды');self.search_progress.stop();self.search_progress.set(0)
+            self.render_mods(([],version,kind));self.modstatus.configure(text='Vanilla запускается без модов. Для модов выберите совместимый загрузчик.');return
         aliases={'креейт':'Create','криэйт':'Create','содиум':'sodium','натрий':'sodium','ирис':'iris','мод меню':'mod menu','фабрик апи':'fabric api','миникарта':'minimap','карта':'map','шейдеры':'shader','оптимизация':'optimization'}
         query=aliases.get(query.lower(),query)
         self.search_id+=1; request=self.search_id; self.searching=True

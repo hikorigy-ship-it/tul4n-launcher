@@ -6,7 +6,7 @@ import uuid
 import zipfile
 from pathlib import Path, PurePosixPath
 import requests
-from loaders import VERSIONS
+from loaders import VERSIONS, COMPATIBILITY
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -60,18 +60,33 @@ def new_instance(root,name,version,loader=None,loader_type='fabric'):
     (folder/'.chunk.json').write_text(json.dumps(data,ensure_ascii=False,indent=2),'utf-8')
     return data
 
+def select_base(root,version,kind,loader=None):
+    base=version if kind=='fabric' else kind+'-'+version
+    instance_id=base+('--'+loader if loader and kind!='vanilla' else '')
+    if not re.fullmatch(r'[\w.+-]+',instance_id):raise ValueError('Неверное имя версии загрузчика')
+    folder=Path(root)/'instances'/instance_id;folder.mkdir(parents=True,exist_ok=True)
+    data={'id':instance_id,'name':kind.title()+' '+version+(' • '+loader if loader and kind!='vanilla' else ''),'version':version,'loader':loader,'loader_type':kind,'source':'base'}
+    (folder/'.chunk.json').write_text(json.dumps(data,ensure_ascii=False),'utf-8')
+    return data
+
 def list_instances(root):
-    result=[{'id':v if kind=='fabric' else kind+'-'+v,'name':kind.title()+' '+v,'version':v,'loader':None,'loader_type':kind,'source':'base'} for v in VERSIONS for kind in ('fabric','forge','neoforge')]
+    result=[{'id':v if kind=='fabric' else kind+'-'+v,'name':kind.title()+' '+v,'version':v,'loader':None,'loader_type':kind,'source':'base'} for v in VERSIONS for kind in COMPATIBILITY.get(v,{'vanilla':[v]})]
     folder=Path(root)/'instances'
     if folder.exists():
         for child in folder.iterdir():
             if child.is_symlink() or not child.is_dir(): continue
             metadata=child/'.chunk.json'
-            if not metadata.exists(): continue
             try:
-                data=json.loads(metadata.read_text('utf-8'))
+                if metadata.exists():data=json.loads(metadata.read_text('utf-8'))
+                elif (child/'.chunk-loader-ready.json').exists():
+                    ready=json.loads((child/'.chunk-loader-ready.json').read_text('utf-8'))
+                    installed=json.loads((child/'versions'/ready['id']/(ready['id']+'.json')).read_text('utf-8'))
+                    version=ready.get('minecraft') or installed.get('inheritsFrom') or ready['id']
+                    data={'id':child.name,'name':ready['kind'].title()+' '+version,'version':version,'loader':ready['loader'],'loader_type':ready['kind'],'source':'base'}
+                else:continue
                 data.setdefault('loader_type','fabric')
-                if data['id']==child.name and data['version'] in VERSIONS:result.append(data)
+                if data['id']==child.name:
+                    result=[x for x in result if x['id']!=data['id']];result.append(data)
             except (ValueError,KeyError,OSError): pass
     return result
 
