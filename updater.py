@@ -7,7 +7,7 @@ import re
 import subprocess
 import requests
 
-VERSION = '2026.11.15.10'
+VERSION = '2026.11.16.2'
 REPOSITORY = 'hikorigy-ship-it/tul4n-launcher'
 
 

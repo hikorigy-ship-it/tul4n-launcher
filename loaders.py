@@ -111,7 +111,7 @@ def available(kind,version):
     if versions:return versions[0]
     raise ValueError(f'Для Minecraft {version} нет поддерживаемой установки {kind.title()}. Выберите другой загрузчик или версию.')
 
-def install(kind,version,game,java,callback,pinned=None,cancel_event=None):
+def install(kind,version,game,java,callback,pinned=None,cancel_event=None,repair=False):
     def check_cancel():
         if cancel_event is not None and cancel_event.is_set():
             from instance_tools import Cancelled
@@ -120,9 +120,10 @@ def install(kind,version,game,java,callback,pinned=None,cancel_event=None):
     game=Path(game); game.mkdir(parents=True,exist_ok=True)
     if kind=='forge' and pinned and not pinned.startswith(version+'-'):pinned=version+'-'+pinned
     marker=game/'.chunk-loader-ready.json'
-    if marker.exists():
+    if marker.exists() and not repair:
         data=json.loads(marker.read_text('utf-8'))
         if data.get('kind')==kind and data.get('minecraft',version)==version and (pinned is None or data.get('loader')==pinned) and (game/'versions'/data['id']/(data['id']+'.json')).exists():return data['id']
+    if repair:marker.unlink(missing_ok=True)
     loader=pinned or available(kind,version)
     if kind=='forge' and not loader.startswith(version+'-'):loader=version+'-'+loader
     if loader not in loader_versions(kind,version):raise ValueError('Выбранный загрузчик несовместим с Minecraft '+version)

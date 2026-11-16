@@ -9,7 +9,7 @@ with tempfile.TemporaryDirectory() as temp:
     with patch.object(launcher.Launcher,'refresh_version_catalog'),patch.object(launcher.Launcher,'queue_compatibility'):
         app=launcher.Launcher();app.catalog_loaded=True;app.update()
         for name,(accent,hover) in colors.PALETTES.items():
-            app.change_color(name);app.update()
+            app.change_color(name);app.after(450,app.quit);app.mainloop()
             value=app.play.cget('fg_color');assert (value[-1] if isinstance(value,(list,tuple)) else value)==accent,(name,value,accent)
             assert json.loads(launcher.CONFIG.read_text('utf-8'))['color']==name
             button=launcher.ct.CTkButton(app.pages['Настройки'],text='New');button.pack();app.update()

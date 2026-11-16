@@ -3,6 +3,7 @@ import colorsys
 import copy
 import re
 import weakref
+import time
 import tkinter as tk
 import customtkinter as ct
 
@@ -21,6 +22,7 @@ _geometry=weakref.WeakKeyDictionary()
 _widgets=weakref.WeakKeyDictionary()
 _reverse={}
 _applying=False
+_transition=None
 _defaults=copy.deepcopy(ct.ThemeManager.theme)
 
 def valid_hex(value):return isinstance(value,str) and re.fullmatch(r'#[0-9a-fA-F]{6}',value) is not None
@@ -131,13 +133,26 @@ def install():
             return _configure(self,*args,**kwargs)
         cls.__init__,cls.configure=themed_init,themed_configure
 
-def select(name):
+def mix(start,end,amount):
+    if isinstance(start,(list,tuple)) and isinstance(end,(list,tuple)) and len(start)==len(end):return [mix(a,b,amount) for a,b in zip(start,end)]
+    if valid_hex(start) and valid_hex(end):return '#'+''.join(f'{round(int(start[i:i+2],16)*(1-amount)+int(end[i:i+2],16)*amount):02x}' for i in (1,3,5))
+    return end
+
+def stop_transition():
+    global _transition
+    if _transition:
+        root,job=_transition
+        try:root.after_cancel(job)
+        except tk.TclError:pass
+        _transition=None
+
+def select(name,root=None,on_frame=None):
     global current,_applying
-    current=name if name in PALETTES else 'Зеленый'
+    stop_transition();current=name if name in PALETTES else 'Зеленый'
     for key,values in _defaults.items():
         for option,value in values.items():
             if option.endswith('_color'):ct.ThemeManager.theme[key][option]=_options(key,{option:value})[option]
-    _applying=True
+    plans=[];_applying=True
     try:
         for widget,base in list(_widgets.items()):
             try:
@@ -148,8 +163,29 @@ def select(name):
             if widget in _geometry:
                 options['corner_radius']=profile['radius'] if profile['radius'] is not None and getattr(widget,'_current_height',20)>5 else _geometry[widget]
             _contrast(widget,options)
-            widget.configure(**options)
+            start={key:getattr(widget,'_'+key,None) for key in options}
+            animated={key:value for key,value in options.items() if key.endswith('_color') and start[key]!=value}
+            if root is not None and widget.winfo_ismapped() and animated:
+                fixed={key:value for key,value in options.items() if key not in animated}
+                if fixed:widget.configure(**fixed)
+                plans.append((widget,{key:start[key] for key in animated},animated))
+            else:widget.configure(**options)
     finally:_applying=False
+    if root is None:return
+    started=time.monotonic()
+    def frame():
+        global _applying,_transition
+        _transition=None;progress=min(1,(time.monotonic()-started)/.32);amount=progress*progress*(3-2*progress)
+        _applying=True
+        try:
+            for widget,start,target in plans:
+                try:
+                    if widget.winfo_exists():widget.configure(**{key:mix(start[key],value,amount) for key,value in target.items()})
+                except tk.TclError:pass
+            if on_frame:on_frame(amount)
+        finally:_applying=False
+        if progress<1:_transition=(root,root.after(20,frame))
+    frame()
 
 def recolor_canvas(canvas):
     originals=getattr(canvas,'_palette_items',{})

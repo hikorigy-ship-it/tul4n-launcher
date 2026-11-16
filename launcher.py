@@ -18,6 +18,8 @@ import packs
 import loaders
 import updater
 import instance_tools
+import game_tools
+import i18n
 from resource_catalog import ResourceCatalog
 from build_code_ui import BuildCodeUI
 from hover import AnimatedButton
@@ -103,6 +105,7 @@ ct.ThemeManager.theme['CTkEntry']['fg_color']=['#222c22','#222c22']
 ct.ThemeManager.theme['CTkEntry']['border_color']=['#313e32','#313e32']
 import colors
 colors.install()
+i18n.install()
 from appearance import AppearancePanel
 
 class Launcher(ct.CTk):
@@ -114,6 +117,7 @@ class Launcher(ct.CTk):
         self.geometry('1180x780'); self.minsize(1060, 720)
         self.configure(fg_color='#101410')
         self.cfg = json.loads(CONFIG.read_text('utf-8')) if CONFIG.exists() else {}
+        i18n.select(self.cfg.get('language','ru'))
         self.root_path=ROOT
         colors.set_profile(self.cfg.get('appearance',{}))
         colors.select(self.cfg.get('color','Зеленый'))
@@ -158,6 +162,7 @@ class Launcher(ct.CTk):
         profile=ct.CTkFrame(side,fg_color='#1a231b',corner_radius=13); profile.pack(side='bottom',padx=12,pady=18,fill='x')
         ct.CTkLabel(profile,text='◈  Офлайн-профиль',font=('Segoe UI',12,'bold'),text_color='#a4ffb8').pack(padx=10,pady=(12,4))
         self.sidebar_nick=ct.CTkLabel(profile,text=self.nick.get() or 'Выберите ник',font=('Segoe UI',13)); self.sidebar_nick.pack(pady=(0,12))
+        self.log_windows=[]
         self.build_code_ui=BuildCodeUI(self)
         self.home(); self.mods(); self.builds(); self.resource_catalogs={kind:ResourceCatalog(self,kind) for kind in ('resourcepack','shader')}; self.profiles(); self.settings(); self.refresh_instances(); self.show('Главная')
         self.protocol('WM_DELETE_WINDOW',self.close)
@@ -239,6 +244,8 @@ class Launcher(ct.CTk):
         if self.build_code_ui.cancel_running():
             self.status.configure(text='Отменяем импорт перед закрытием…');self.after(200,self.close);return
         self.build_code_ui.close()
+        colors.stop_transition()
+        for viewer in self.log_windows:viewer.close()
         if getattr(self,'poll_job',None):self.after_cancel(self.poll_job)
         for catalogue in self.resource_catalogs.values():catalogue.close()
         self.appearance_panel.close()
@@ -274,6 +281,8 @@ class Launcher(ct.CTk):
         transfers=ct.CTkFrame(p,fg_color='transparent');transfers.pack(fill='x',pady=(0,5))
         self.cancel_download=ct.CTkButton(transfers,text='Отменить загрузку',height=26,width=160,state='disabled',command=self.cancel_transfer);self.cancel_download.pack(side='left')
         self.retry_download=ct.CTkButton(transfers,text='Повторить',height=26,width=100,state='disabled',command=self.retry_transfer);self.retry_download.pack(side='left',padx=8)
+        ct.CTkButton(transfers,text='Журнал запуска',height=26,width=145,command=self.show_game_log).pack(side='left',padx=4)
+        ct.CTkButton(transfers,text='Восстановить файлы',height=26,width=175,command=self.repair_game).pack(side='left',padx=4)
         lower=ct.CTkFrame(p,fg_color='transparent'); lower.pack(fill='both',expand=True); lower.grid_columnconfigure((0,1),weight=1); lower.grid_rowconfigure(0,weight=1)
         left=ct.CTkFrame(lower,fg_color='#191f19',corner_radius=15); left.grid(row=0,column=0,sticky='nsew',padx=(0,8))
         right=ct.CTkFrame(lower,fg_color='#191f19',corner_radius=15); right.grid(row=0,column=1,sticky='nsew',padx=(8,0))
@@ -357,6 +366,7 @@ class Launcher(ct.CTk):
             elif kind=='operation_failed':self.retry_download.configure(state='normal')
             elif kind=='instances_updated':self.refresh_instances()
             elif kind=='code_ui':data()
+            elif kind=='log_result':data[0].result(*data[1:])
             elif kind=='mod_update_preview':self.show_mod_update_preview(*data)
             elif kind=='close_after_launch':self.close();return
             elif kind=='resource_result':self.resource_catalogs[data[0]].result(*data[1:])
@@ -632,7 +642,7 @@ class Launcher(ct.CTk):
             actions=ct.CTkFrame(body,fg_color='transparent');actions.pack(side='right',padx=(10,0),pady=(0,8))
             ct.CTkButton(actions,text='Выбрать',width=120,height=26,corner_radius=0,command=lambda x=item:self.activate_instance(x)).pack()
             ct.CTkButton(actions,text='Оформление',width=120,height=26,corner_radius=0,fg_color='#344f40',command=lambda x=item:self.edit_pack(x)).pack()
-            ct.CTkButton(actions,text='Экспортировать',width=120,height=26,corner_radius=0,fg_color='#344f40',command=lambda x=item:self.build_code_ui.export(x)).pack()
+            ct.CTkButton(actions,text='Экспортировать',width=120,height=26,corner_radius=0,fg_color='#344f40',command=lambda x=item:self.export_build(x)).pack()
             ct.CTkButton(actions,text='Управление',width=120,height=26,corner_radius=0,fg_color='#344f40',command=lambda x=item:self.pack_tools(x)).pack()
             tools=ct.CTkFrame(actions,fg_color='transparent');tools.pack()
             ct.CTkButton(tools,text='Папка',width=57,height=26,corner_radius=0,fg_color='#344f40',command=lambda x=item:self.open_instance_folder(x)).pack(side='left',padx=(0,6))
@@ -729,6 +739,30 @@ class Launcher(ct.CTk):
             window.destroy()
             self.work(lambda:self.finish_maintenance(instance_tools.apply_mods(ROOT/'instances'/item['id'],item,plan['roots'],self.transfer)),True)
         ct.CTkButton(window,text='Установить показанные версии',width=280,command=install).pack(pady=10)
+    def show_game_log(self,item=None):
+        self.log_windows=[viewer for viewer in self.log_windows if not viewer.closed]
+        self.log_windows.append(game_tools.LogWindow(self,dict(item or self.active_instance())))
+    def repair_game(self,item=None):
+        if self.busy or self.game_running:
+            self.events.put(('status','Сначала закройте игру и дождитесь завершения операции.'));return
+        item=dict(item or self.active_instance());item.setdefault('java',self.cfg.get('java',''))
+        folder=packs.safe_path(ROOT/'instances',item['id'])
+        self.work(lambda:self.finish_maintenance(game_tools.repair(ROOT,folder,item,self.transfer)),True)
+    def export_build_file(self,item,parent=None):
+        if self.busy or self.game_running:
+            self.events.put(('status','Сначала закройте игру и дождитесь завершения операции.'));return
+        item=dict(item)
+        path=filedialog.asksaveasfilename(parent=parent or self,title='Сохранить файл сборки',defaultextension='.tul4n.zip',initialfile=re.sub(r'[^\w .-]','_',item['name'])+'.tul4n.zip',filetypes=[('Сборка TUL4N','*.tul4n.zip')])
+        if path:self.work(lambda:self.finish_maintenance(instance_tools.export_pack(packs.safe_path(ROOT/'instances',item['id']),item,path,self.transfer)),True)
+    def export_build(self,item):
+        window=ct.CTkToplevel(self);window.title('Экспорт • '+item['name']);window.geometry('560x290');window.transient(self)
+        self.label(window,'Как поделиться сборкой?',23)
+        def code():window.destroy();self.build_code_ui.export(item)
+        def file():window.destroy();self.export_build_file(item)
+        ct.CTkButton(window,text='Код TUL4N',command=code).pack(fill='x',padx=18,pady=8)
+        self.label(window,'Код скачает те же версии компонентов с Modrinth.',12)
+        ct.CTkButton(window,text='Файл сборки (.tul4n.zip)',command=file).pack(fill='x',padx=18,pady=8)
+        self.label(window,'Архив с модами, настройками, ресурспаками, шейдерами и обложкой.\nБез миров, аккаунтов и файлов самой игры.',12)
     def import_build(self):
         if self.busy or self.game_running:
             self.pack_status.configure(text='Сначала закройте игру и дождитесь завершения операции.');return
@@ -780,10 +814,9 @@ class Launcher(ct.CTk):
         row2=ct.CTkFrame(panel,fg_color='transparent');row2.pack(fill='x',pady=6)
         ct.CTkButton(row2,text='Откатить моды',width=185,command=lambda:run(lambda:instance_tools.rollback(folder))).pack(side='left',padx=3)
         ct.CTkButton(row2,text='Копия миров',width=185,command=lambda:run(lambda:'Копия миров: '+str(instance_tools.backup_worlds(folder,self.transfer) or 'сохранённых миров пока нет'))).pack(side='left',padx=3)
-        def export():
-            path=filedialog.asksaveasfilename(parent=window,title='Экспорт сборки',defaultextension='.tul4n.zip',initialfile=re.sub(r'[^\w .-]','_',item['name'])+'.tul4n.zip',filetypes=[('Сборка TUL4N','*.tul4n.zip')])
-            if path:run(lambda:instance_tools.export_pack(folder,item,path,self.transfer))
-        ct.CTkButton(panel,text='Экспортировать сборку',command=export).pack(anchor='w',pady=6)
+        ct.CTkButton(panel,text='Экспортировать файл (.tul4n.zip)',command=lambda:self.export_build_file(item,window)).pack(anchor='w',pady=6)
+        ct.CTkButton(panel,text='Журнал запуска',command=lambda:self.show_game_log(item)).pack(anchor='w',pady=6)
+        ct.CTkButton(panel,text='Проверить и восстановить Minecraft',command=lambda:self.repair_game(item)).pack(anchor='w',pady=6)
         ct.CTkButton(panel,text='Отменить текущую загрузку',command=self.cancel_transfer).pack(anchor='w',pady=6)
         ct.CTkButton(panel,text='Открыть папку и журналы',command=lambda:self.open_instance_folder(item)).pack(anchor='w',pady=6)
     def pack_cover(self,parent,item):
@@ -924,6 +957,9 @@ class Launcher(ct.CTk):
     def settings(self):
         p=ct.CTkScrollableFrame(self.pages['Настройки'],fg_color='transparent');p.pack(fill='both',expand=True)
         self.label(p,'Настрой под себя',36)
+        self.label(p,'Язык интерфейса / Interface language',16)
+        self.language_menu=ct.CTkOptionMenu(p,values=list(i18n.LANGUAGES),command=self.change_language,width=220)
+        self.language_menu.set(next(name for name,code in i18n.LANGUAGES.items() if code==i18n.current));self.language_menu.pack(anchor='w',pady=(0,10))
         self.appearance_panel=AppearancePanel(self,p)
         self.label(p,'Путь к java.exe • оставьте пустым для автоматического выбора'); self.java_entry=ct.CTkEntry(p,width=650); self.java_entry.insert(0,self.cfg.get('java','')); self.java_entry.pack(anchor='w')
         self.label(p,'1.16.5 → Java 8 • 1.20.1 → Java 17 • 1.21.x → Java 21 • 26.x → Java 25',12,'#afbc9e')
@@ -963,16 +999,34 @@ class Launcher(ct.CTk):
         threading.Thread(target=job,daemon=True).start()
     def save_settings(self):
         self.cfg.update(java=self.java_entry.get().strip(),ram=int(self.ram.get())); self.save(); self.settings_status.configure(text='Настройки сохранены')
+    def change_language(self,name):
+        StyledOptionMenu.close_all();self.cfg['language']=i18n.LANGUAGES[name];i18n.select(self.cfg['language'])
+        for menu in list(StyledOptionMenu._instances):menu.refresh_translation()
+        self.save()
     def change_color(self,name):
         self.cfg['color']=name
         options=dict(colors.profile);options['custom']={};self.cfg['appearance']=colors.set_profile(options)
         self.apply_appearance();self.save()
         if hasattr(self,'appearance_panel'):self.appearance_panel.sync()
     def apply_appearance(self,refresh_cards=False):
-        StyledOptionMenu.close_all();colors.select(self.cfg.get('color','Зеленый'))
-        self.configure(fg_color=colors.color('#101410'));self.page_host.configure(bg=colors.color('#101410'))
-        self.transition_line.configure(bg=colors.color('#101410'));self.nav_indicator.configure(bg=colors.color('#a3ffbb'))
-        self.hero_canvas.configure(bg=colors.color('#132217'));colors.recolor_canvas(self.hero_canvas)
+        StyledOptionMenu.close_all()
+        native=[(self,'fg_color','#101410'),(self.page_host,'bg','#101410'),(self.transition_line,'bg','#101410'),(self.nav_indicator,'bg','#a3ffbb'),(self.hero_canvas,'bg','#132217')]
+        starts=[widget.cget(option) for widget,option,_ in native]
+        originals=getattr(self.hero_canvas,'_palette_items',{});canvas=[]
+        for item in self.hero_canvas.find_all():
+            for option in ('fill','outline'):
+                try:
+                    value=self.hero_canvas.itemcget(item,option)
+                    if value:
+                        key=(item,option);originals.setdefault(key,colors._reverse.get(value,value));canvas.append((item,option,value,originals[key]))
+                except tk.TclError:pass
+        self.hero_canvas._palette_items=originals
+        def paint(amount):
+            for (widget,option,raw),start in zip(native,starts):widget.configure(**{option:colors.mix(start,colors.color(raw),amount)})
+            for item,option,start,raw in canvas:
+                try:self.hero_canvas.itemconfigure(item,**{option:colors.mix(start,colors.color(raw),amount)})
+                except tk.TclError:pass
+        colors.select(self.cfg.get('color','Зеленый'),self,paint)
         try:self.attributes('-alpha',colors.profile['opacity'])
         except tk.TclError:pass
         if refresh_cards:

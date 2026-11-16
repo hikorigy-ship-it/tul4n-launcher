@@ -139,22 +139,24 @@ def resolve(item, roots, installed, transfer):
     return selected
 
 
-def archive_tree(source, destination, prefixes, transfer):
+def archive_tree(source, destination, prefixes, transfer,hashes=None):
     source = Path(source)
     temporary = Path(str(destination)+'.part')
     try:
         with zipfile.ZipFile(temporary,'w',zipfile.ZIP_DEFLATED) as archive:
             for prefix in prefixes:
                 base = source/prefix
-                if base.is_symlink(): raise ValueError('Нельзя архивировать ссылку: '+prefix)
+                if base.is_symlink() or getattr(base,'is_junction',lambda:False)(): raise ValueError('Нельзя архивировать ссылку: '+prefix)
                 paths = [base] if base.is_file() else base.rglob('*') if base.exists() else []
                 for path in paths:
                     transfer.check()
-                    if path.is_symlink(): raise ValueError('Нельзя архивировать ссылку: '+path.name)
+                    if path.is_symlink() or not path.resolve().is_relative_to(source.resolve()): raise ValueError('Нельзя архивировать ссылку: '+path.name)
                     if path.is_file():
                         transfer.notify('Архивируем: '+path.name, 0)
-                        with path.open('rb') as src, archive.open(path.relative_to(source).as_posix(),'w',force_zip64=True) as dst:
-                            while block := src.read(1048576): transfer.check(); dst.write(block)
+                        relative=path.relative_to(source).as_posix();digest=hashlib.sha256()
+                        with path.open('rb') as src, archive.open(relative,'w',force_zip64=True) as dst:
+                            while block := src.read(1048576):transfer.check();dst.write(block);digest.update(block)
+                        if hashes is not None:hashes[relative]=digest.hexdigest()
         temporary.replace(destination)
     finally:
         temporary.unlink(missing_ok=True)
@@ -263,10 +265,14 @@ def export_pack(folder,item,destination,transfer):
     if destination.resolve().is_relative_to(Path(folder).resolve()): raise ValueError('Сохраните архив за пределами папки сборки')
     temporary = destination.with_name(destination.name+'.'+uuid.uuid4().hex+'.tmp')
     try:
-        archive_tree(folder,temporary,PORTABLE,transfer)
+        hashes={};archive_tree(folder,temporary,PORTABLE,transfer,hashes)
         with zipfile.ZipFile(temporary,'a',zipfile.ZIP_DEFLATED) as archive:
             metadata = {k:item[k] for k in ('name','version','loader','loader_type','description','cover') if k in item}
-            archive.writestr('tul4n-pack.json',json.dumps({'format':1,'pack':metadata},ensure_ascii=False))
+            marker=Path(folder)/'.chunk-loader-ready.json'
+            if marker.exists():
+                ready=json.loads(marker.read_text('utf-8'))
+                if ready.get('kind')==item.get('loader_type') and ready.get('minecraft',item['version'])==item['version']:metadata['loader']=ready.get('loader')
+            archive.writestr('tul4n-pack.json',json.dumps({'format':2,'pack':metadata,'sha256':hashes},ensure_ascii=False))
         transfer.check(); temporary.replace(destination)
     finally: temporary.unlink(missing_ok=True)
     return 'Сборка экспортирована без миров и аккаунтов: '+destination.name
@@ -281,24 +287,34 @@ def import_pack(root,source,transfer):
             entries = archive.infolist()
             if len(entries) > 30000 or sum(e.file_size for e in entries)>4*1024**3: raise ValueError('Слишком большой архив сборки (максимум 4 ГБ)')
             meta = archive.getinfo('tul4n-pack.json')
-            if meta.file_size > 65536: raise ValueError('Слишком большие метаданные')
+            if meta.file_size > 8*1024*1024: raise ValueError('Слишком большие метаданные')
             data = json.loads(archive.read(meta)); item = data['pack']
-            if data.get('format') != 1 or not re.fullmatch(r'[\w.+-]{1,64}',item['version']) or item['loader_type'] not in ('vanilla','fabric','forge','neoforge'):
+            if data.get('format') not in (1,2) or not re.fullmatch(r'[\w.+-]{1,64}',item['version']) or item['loader_type'] not in ('vanilla','fabric','forge','neoforge'):
                 raise ValueError('Неверный формат сборки')
             if not isinstance(item.get('name'),str) or not 1<=len(item['name'])<=64: raise ValueError('Неверное название сборки')
             if item.get('loader') and (not isinstance(item['loader'],str) or not re.fullmatch(r'[\w.+-]{1,100}',item['loader'])): raise ValueError('Неверная версия загрузчика')
+            if item.get('cover') and item['cover']!='cover.png':raise ValueError('Недопустимое имя обложки')
+            hashes=data.get('sha256',{})
+            if data['format']==2:
+                if not isinstance(hashes,dict) or set(hashes)!={e.filename for e in entries if not e.is_dir() and e.filename!='tul4n-pack.json'}:raise ValueError('Список контрольных сумм не соответствует архиву')
+                if any(not isinstance(h,str) or not re.fullmatch('[0-9a-f]{64}',h) for h in hashes.values()):raise ValueError('Неверные контрольные суммы архива')
+            from build_codes import filename as valid_filename
             seen = set()
-            for entry in entries:
+            for number,entry in enumerate(entries):
                 target = packs.safe_path(staging,entry.filename)
                 key = entry.filename.casefold()
                 if key in seen or any(':' in part or part.rstrip(' .')!=part for part in Path(entry.filename).parts): raise ValueError('Повторяющийся или неверный путь')
                 seen.add(key)
                 if entry.filename=='tul4n-pack.json': continue
+                for part in Path(entry.filename).parts:valid_filename(part)
                 if entry.filename.split('/')[0] not in PORTABLE: raise ValueError('Посторонний файл в сборке: '+entry.filename)
                 if entry.is_dir(): continue
+                if (entry.external_attr>>16)&0o170000==0o120000:raise ValueError('Ссылки в архиве не поддерживаются')
                 transfer.check(); target.parent.mkdir(parents=True,exist_ok=True)
+                digest=hashlib.sha256();transfer.notify('Импортируем: '+entry.filename,number/max(1,len(entries)))
                 with archive.open(entry) as src,target.open('wb') as dst:
-                    while block:=src.read(1048576): transfer.check(); dst.write(block)
+                    while block:=src.read(1048576):transfer.check();dst.write(block);digest.update(block)
+                if data['format']==2 and digest.hexdigest()!=hashes[entry.filename]:raise ValueError('Неверная контрольная сумма: '+entry.filename)
         # Import only portable presentation/version fields; paths and Java are local settings.
         item = {k:item[k] for k in ('name','version','loader','loader_type','description','cover') if k in item}
         item.update(id=identifier,source='local')

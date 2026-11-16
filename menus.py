@@ -3,6 +3,7 @@ import tkinter as tk
 import time
 import weakref
 import customtkinter as ct
+import i18n
 from hover import AnimatedButton
 
 
@@ -15,6 +16,19 @@ class StyledOptionMenu(ct.CTkOptionMenu):
         self._instances.add(self)
         self.bind('<KeyPress-space>', lambda event: self._open_dropdown_menu(), add='+')
         self.bind('<KeyPress-Return>', lambda event: self._open_dropdown_menu(), add='+')
+        self.refresh_translation()
+
+    def refresh_translation(self):
+        self._text_label.configure(text=i18n.tr(self.get()))
+
+    def set(self,value):
+        super().set(value);self.refresh_translation()
+
+    def _variable_callback(self,*args):
+        super()._variable_callback(*args);self.refresh_translation()
+
+    def _dropdown_callback(self,value):
+        super()._dropdown_callback(value);self.refresh_translation()
 
     def _close_popup(self):
         popup, self._popup = self._popup, None
